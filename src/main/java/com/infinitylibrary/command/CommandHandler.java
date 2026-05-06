@@ -21,7 +21,7 @@ public class CommandHandler implements CommandExecutor, TabCompleter {
             switch (args[0].toLowerCase(Locale.ROOT)) {
                 case "gui", "stats" -> { if (sender instanceof Player p) plugin.getGuiManager().openStats(p); else msg(sender, "Players only."); }
                 case "wand" -> adminPlayer(sender, p -> { p.getInventory().addItem(plugin.getSelectionManager().createWand()); msg(p, "Selection wand added. Use /il wandmode pos1 or /il wandmode pos2, then click blocks while holding it."); });
-                case "connectionwand", "connwand" -> adminPlayer(sender, p -> { p.getInventory().addItem(plugin.getSelectionManager().createConnectionWand()); msg(p, "Connection wand added. Use /il connectionmode <direction> <width> <height> [prefix], then click connection blocks inside your selected room."); });
+                case "connectionwand", "connwand" -> adminPlayer(sender, p -> { p.getInventory().addItem(plugin.getSelectionManager().createConnectionWand()); msg(p, "Connection wand added. Click 2 points on one outer room face to auto-detect connection direction and size. Optional: /il connectionmode [prefix]"); });
                 case "wandmode" -> adminPlayer(sender, p -> { require(args, 2, "/il wandmode <pos1|pos2>"); plugin.getSelectionManager().setMode(p, args[1]); });
                 case "connectionmode", "connmode" -> adminPlayer(sender, p -> setConnectionMode(p, args));
                 case "pos1" -> adminPlayer(sender, p -> { plugin.getRoomManager().setPos1(p); msg(p, "Selection position 1 set."); });
@@ -50,10 +50,8 @@ public class CommandHandler implements CommandExecutor, TabCompleter {
     }
 
     private void setConnectionMode(Player p, String[] args) {
-        require(args, 4, "/il connectionmode <NORTH|EAST|SOUTH|WEST|UP|DOWN> <width> <height> [prefix]");
-        BlockFace direction = BlockFace.valueOf(args[1].toUpperCase(Locale.ROOT));
-        String prefix = args.length >= 5 ? args[4] : "conn";
-        plugin.getSelectionManager().setConnectionSettings(p, direction, Integer.parseInt(args[2]), Integer.parseInt(args[3]), prefix);
+        String prefix = args.length >= 2 ? args[1] : "conn";
+        plugin.getSelectionManager().setConnectionPrefix(p, prefix);
     }
 
     private void saveRoom(Player p, String[] args) {
@@ -91,7 +89,7 @@ public class CommandHandler implements CommandExecutor, TabCompleter {
     @Override public List<String> onTabComplete(CommandSender s, Command c, String a, String[] args) {
         if (args.length == 1) return List.of("gui","stats","home","start","wand","connectionwand","connwand","wandmode","connectionmode","connmode","pos1","pos2","addconnection","clearconnections","saveroom","savedefault","editroom","deleteroom","listrooms","reset","setstart","book","reload").stream().filter(x -> x.startsWith(args[0].toLowerCase(Locale.ROOT))).toList();
         if (args.length == 2 && args[0].equalsIgnoreCase("wandmode")) return List.of("pos1", "pos2");
-        if (args.length == 2 && (args[0].equalsIgnoreCase("connectionmode") || args[0].equalsIgnoreCase("connmode"))) return List.of("NORTH", "EAST", "SOUTH", "WEST", "UP", "DOWN");
+        if (args.length == 2 && (args[0].equalsIgnoreCase("connectionmode") || args[0].equalsIgnoreCase("connmode"))) return List.of("conn");
         if (args.length == 2 && args[0].equalsIgnoreCase("book")) return List.of("public", "private", "edit");
         if (args.length == 3 && (args[0].equalsIgnoreCase("saveroom") || args[0].equalsIgnoreCase("editroom") || args[0].equalsIgnoreCase("savedefault"))) return List.of("FILLER","BOOK","READ");
         return List.of();

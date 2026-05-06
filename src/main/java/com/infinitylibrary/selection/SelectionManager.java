@@ -23,7 +23,7 @@ public class SelectionManager {
     private final NamespacedKey selectionWandKey;
     private final NamespacedKey connectionWandKey;
     private final Map<UUID, Mode> modes = new HashMap<>();
-    private final Map<UUID, ConnectionSettings> connectionSettings = new HashMap<>();
+    private final Map<UUID, String> connectionPrefixes = new HashMap<>();
     private final Map<UUID, List<ConnectionPoint>> stagedConnections = new HashMap<>();
     private final Map<UUID, Integer> connectionCounters = new HashMap<>();
     private final Map<UUID, Vector3i> pendingConnectionStart = new HashMap<>();
@@ -73,11 +73,10 @@ public class SelectionManager {
         player.sendMessage(ChatColor.LIGHT_PURPLE + "Selection wand mode set to " + mode.name() + ".");
     }
 
-    public void setConnectionSettings(Player player, BlockFace direction, int width, int height, String prefix) {
-        if (!isSupportedDirection(direction)) throw new IllegalArgumentException("Direction must be NORTH/EAST/SOUTH/WEST/UP/DOWN");
-        if (width < 1 || height < 1) throw new IllegalArgumentException("Width and height must be positive");
-        connectionSettings.put(player.getUniqueId(), new ConnectionSettings(direction, width, height, prefix == null || prefix.isBlank() ? "conn" : prefix));
-        player.sendMessage(ChatColor.AQUA + "Connection wand set to " + direction.name() + " " + width + "x" + height + " prefix=" + (prefix == null || prefix.isBlank() ? "conn" : prefix) + ".");
+    public void setConnectionPrefix(Player player, String prefix) {
+        String effective = prefix == null || prefix.isBlank() ? "conn" : prefix;
+        connectionPrefixes.put(player.getUniqueId(), effective);
+        player.sendMessage(ChatColor.AQUA + "Connection wand prefix set to " + effective + ". Direction and size are auto-detected from your 2-point selection.");
     }
 
     public List<ConnectionPoint> stagedConnections(Player player) {
@@ -130,9 +129,9 @@ public class SelectionManager {
             int width = face == BlockFace.NORTH || face == BlockFace.SOUTH ? max.x() - min.x() + 1 : face == BlockFace.EAST || face == BlockFace.WEST ? max.z() - min.z() + 1 : Math.max(max.x() - min.x() + 1, max.z() - min.z() + 1);
             int height = face == BlockFace.UP || face == BlockFace.DOWN ? 1 : max.y() - min.y() + 1;
             Vector3i center = new Vector3i((min.x() + max.x()) / 2, min.y(), (min.z() + max.z()) / 2);
-            ConnectionSettings settings = connectionSettings.getOrDefault(playerId, new ConnectionSettings(face, width, height, "conn"));
+            String prefix = connectionPrefixes.getOrDefault(playerId, "conn");
             int number = connectionCounters.merge(player.getUniqueId(), 1, Integer::sum);
-            ConnectionPoint connectionPoint = new ConnectionPoint(settings.prefix() + "_" + number, center, face, width, height);
+            ConnectionPoint connectionPoint = new ConnectionPoint(prefix + "_" + number, center, face, width, height);
             addStagedConnection(player, connectionPoint);
             player.sendMessage(ChatColor.AQUA + "Staged connection " + connectionPoint.id() + " at " + center + " facing " + face.name() + " (" + width + "x" + height + ").");
         } catch (IllegalArgumentException ex) {
@@ -164,13 +163,8 @@ public class SelectionManager {
         }
     }
 
-    private boolean isSupportedDirection(BlockFace face) {
-        return face == BlockFace.NORTH || face == BlockFace.EAST || face == BlockFace.SOUTH || face == BlockFace.WEST || face == BlockFace.UP || face == BlockFace.DOWN;
-    }
-
     private String format(Block block) {
         return block.getX() + ", " + block.getY() + ", " + block.getZ();
     }
 
-    private record ConnectionSettings(BlockFace direction, int width, int height, String prefix) {}
 }
