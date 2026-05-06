@@ -2,6 +2,8 @@ package com.infinitylibrary.selection;
 
 import com.infinitylibrary.InfinityLibraryPlugin;
 import com.infinitylibrary.model.ConnectionPoint;
+import com.infinitylibrary.model.RoomBlock;
+import com.infinitylibrary.model.VariationArea;
 import com.infinitylibrary.model.Vector3i;
 import org.bukkit.ChatColor;
 import org.bukkit.Material;
@@ -30,7 +32,7 @@ public class SelectionManager {
     private final Map<UUID, Vector3i> pendingConnectionStart = new HashMap<>();
     private final Map<UUID, VariationSettings> variationSettings = new HashMap<>();
     private final Map<UUID, Vector3i> pendingVariationStart = new HashMap<>();
-    private final Map<UUID, List<com.infinitylibrary.model.VariationArea>> stagedVariations = new HashMap<>();
+    private final Map<UUID, List<VariationArea>> stagedVariations = new HashMap<>();
     private final Map<UUID, Integer> variationCounters = new HashMap<>();
 
     public SelectionManager(InfinityLibraryPlugin plugin) {
@@ -113,7 +115,7 @@ public class SelectionManager {
     public void setVariationSettings(Player player, String category, double chance, String prefix) {
         variationSettings.put(player.getUniqueId(), new VariationSettings(category, chance, prefix));
     }
-    public List<com.infinitylibrary.model.VariationArea> stagedVariations(Player player) { return List.copyOf(stagedVariations.getOrDefault(player.getUniqueId(), List.of())); }
+    public List<VariationArea> stagedVariations(Player player) { return List.copyOf(stagedVariations.getOrDefault(player.getUniqueId(), List.of())); }
     public void clearStagedVariations(Player player) { stagedVariations.remove(player.getUniqueId()); pendingVariationStart.remove(player.getUniqueId()); variationCounters.remove(player.getUniqueId()); }
 
     public boolean handle(Player player, Action action, Block clickedBlock) {
@@ -150,7 +152,7 @@ public class SelectionManager {
             Block b = roomOriginBlock.getWorld().getBlockAt(roomOriginBlock.getX()+x, roomOriginBlock.getY()+y, roomOriginBlock.getZ()+z);
             blocks.add(new RoomBlock(new Vector3i(x,y,z), b.getBlockData().getAsString()));
         }
-        stagedVariations.computeIfAbsent(id, k -> new ArrayList<>()).add(new com.infinitylibrary.model.VariationArea(settings.prefix + "_" + index, settings.category, settings.chancePercent, blocks));
+        stagedVariations.computeIfAbsent(id, k -> new ArrayList<>()).add(new VariationArea(settings.prefix + "_" + index, settings.category, settings.chancePercent, blocks));
         player.sendMessage(ChatColor.GREEN + "Variation staged: " + settings.category + " chance=" + settings.chancePercent + "%");
         return true;
     }
