@@ -88,7 +88,7 @@ public class RoomManager {
                 blocks.add(new RoomBlock(new Vector3i(x - minX, y - minY, z - minZ), block.getBlockData().getAsString()));
             }
         }
-        Room room = new Room(id, type, new Vector3i(maxX - minX + 1, maxY - minY + 1, maxZ - minZ + 1), connections, blocks);
+        Room room = new Room(id, type, new Vector3i(maxX - minX + 1, maxY - minY + 1, maxZ - minZ + 1), connections, blocks, plugin.getSelectionManager().stagedVariations(player));
         rooms.put(id, room);
         save();
         return room;
@@ -154,7 +154,7 @@ public class RoomManager {
         blocks.add(new RoomBlock(new Vector3i(sx/2,1,sz/2), Material.LANTERN.getKey().toString()));
         if (bookshelf) blocks.add(new RoomBlock(new Vector3i(sx/2,1,1), Material.CHISELED_BOOKSHELF.getKey().toString()));
         if (seats) blocks.add(new RoomBlock(new Vector3i(sx/2,1,sz/2), Material.OAK_STAIRS.getKey().toString()));
-        return new Room(id, type, new Vector3i(sx, sy, sz), cps, blocks);
+        return new Room(id, type, new Vector3i(sx, sy, sz), cps, blocks, List.of());
     }
 
     private void removeDoorBlock(List<RoomBlock> blocks, Vector3i doorwayBlock) {

@@ -22,16 +22,22 @@ public class SelectionManager {
     private final InfinityLibraryPlugin plugin;
     private final NamespacedKey selectionWandKey;
     private final NamespacedKey connectionWandKey;
+    private final NamespacedKey variationWandKey;
     private final Map<UUID, Mode> modes = new HashMap<>();
     private final Map<UUID, String> connectionPrefixes = new HashMap<>();
     private final Map<UUID, List<ConnectionPoint>> stagedConnections = new HashMap<>();
     private final Map<UUID, Integer> connectionCounters = new HashMap<>();
     private final Map<UUID, Vector3i> pendingConnectionStart = new HashMap<>();
+    private final Map<UUID, VariationSettings> variationSettings = new HashMap<>();
+    private final Map<UUID, Vector3i> pendingVariationStart = new HashMap<>();
+    private final Map<UUID, List<com.infinitylibrary.model.VariationArea>> stagedVariations = new HashMap<>();
+    private final Map<UUID, Integer> variationCounters = new HashMap<>();
 
     public SelectionManager(InfinityLibraryPlugin plugin) {
         this.plugin = plugin;
         this.selectionWandKey = new NamespacedKey(plugin, "selection_wand");
         this.connectionWandKey = new NamespacedKey(plugin, "connection_wand");
+        this.variationWandKey = new NamespacedKey(plugin, "variation_wand");
     }
 
     public ItemStack createWand() {
@@ -61,6 +67,18 @@ public class SelectionManager {
     public boolean isConnectionWand(ItemStack item) {
         if (item == null || !item.hasItemMeta()) return false;
         return item.getItemMeta().getPersistentDataContainer().has(connectionWandKey, PersistentDataType.BYTE);
+    }
+    public boolean isVariationWand(ItemStack item) {
+        if (item == null || !item.hasItemMeta()) return false;
+        return item.getItemMeta().getPersistentDataContainer().has(variationWandKey, PersistentDataType.BYTE);
+    }
+    public ItemStack createVariationWand() {
+        ItemStack wand = new ItemStack(Material.STICK);
+        ItemMeta meta = wand.getItemMeta();
+        meta.setDisplayName(ChatColor.GREEN + "Infinity Library Variation Wand");
+        meta.getPersistentDataContainer().set(variationWandKey, PersistentDataType.BYTE, (byte) 1);
+        wand.setItemMeta(meta);
+        return wand;
     }
 
     public Mode mode(Player player) {
@@ -92,11 +110,17 @@ public class SelectionManager {
         connectionCounters.remove(player.getUniqueId());
         pendingConnectionStart.remove(player.getUniqueId());
     }
+    public void setVariationSettings(Player player, String category, double chance, String prefix) {
+        variationSettings.put(player.getUniqueId(), new VariationSettings(category, chance, prefix));
+    }
+    public List<com.infinitylibrary.model.VariationArea> stagedVariations(Player player) { return List.copyOf(stagedVariations.getOrDefault(player.getUniqueId(), List.of())); }
+    public void clearStagedVariations(Player player) { stagedVariations.remove(player.getUniqueId()); pendingVariationStart.remove(player.getUniqueId()); variationCounters.remove(player.getUniqueId()); }
 
     public boolean handle(Player player, Action action, Block clickedBlock) {
         if (clickedBlock == null) return false;
         ItemStack held = player.getInventory().getItemInMainHand();
         if (isConnectionWand(held)) return handleConnectionWand(player, action, clickedBlock);
+        if (isVariationWand(held)) return handleVariationWand(player, action, clickedBlock);
         if (!isSelectionWand(held)) return false;
         if (action != Action.LEFT_CLICK_BLOCK && action != Action.RIGHT_CLICK_BLOCK) return false;
         Mode mode = mode(player);
@@ -109,6 +133,28 @@ public class SelectionManager {
         }
         return true;
     }
+
+    private boolean handleVariationWand(Player player, Action action, Block clickedBlock) {
+        if (action != Action.LEFT_CLICK_BLOCK && action != Action.RIGHT_CLICK_BLOCK) return false;
+        Vector3i relative = plugin.getRoomManager().relativeToSelection(player, clickedBlock.getLocation());
+        UUID id = player.getUniqueId();
+        Vector3i first = pendingVariationStart.get(id);
+        if (first == null) { pendingVariationStart.put(id, relative); player.sendMessage(ChatColor.GREEN + "Variation point 1 set at " + relative); return true; }
+        pendingVariationStart.remove(id);
+        VariationSettings settings = variationSettings.getOrDefault(id, new VariationSettings("decor", 100.0, "var"));
+        Vector3i min = min(first, relative), max = max(first, relative);
+        int index = variationCounters.merge(id, 1, Integer::sum);
+        List<RoomBlock> blocks = new ArrayList<>();
+        Block roomOriginBlock = player.getWorld().getBlockAt(plugin.getRoomManager().selectionBounds(player).min().x(), plugin.getRoomManager().selectionBounds(player).min().y(), plugin.getRoomManager().selectionBounds(player).min().z());
+        for (int x=min.x();x<=max.x();x++) for (int y=min.y();y<=max.y();y++) for (int z=min.z();z<=max.z();z++) {
+            Block b = roomOriginBlock.getWorld().getBlockAt(roomOriginBlock.getX()+x, roomOriginBlock.getY()+y, roomOriginBlock.getZ()+z);
+            blocks.add(new RoomBlock(new Vector3i(x,y,z), b.getBlockData().getAsString()));
+        }
+        stagedVariations.computeIfAbsent(id, k -> new ArrayList<>()).add(new com.infinitylibrary.model.VariationArea(settings.prefix + "_" + index, settings.category, settings.chancePercent, blocks));
+        player.sendMessage(ChatColor.GREEN + "Variation staged: " + settings.category + " chance=" + settings.chancePercent + "%");
+        return true;
+    }
+    private record VariationSettings(String category, double chancePercent, String prefix) {}
 
     private boolean handleConnectionWand(Player player, Action action, Block clickedBlock) {
         if (action != Action.LEFT_CLICK_BLOCK && action != Action.RIGHT_CLICK_BLOCK) return false;

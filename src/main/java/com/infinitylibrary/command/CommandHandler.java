@@ -22,11 +22,15 @@ public class CommandHandler implements CommandExecutor, TabCompleter {
                 case "gui", "stats" -> { if (sender instanceof Player p) plugin.getGuiManager().openStats(p); else msg(sender, "Players only."); }
                 case "wand" -> adminPlayer(sender, p -> { p.getInventory().addItem(plugin.getSelectionManager().createWand()); msg(p, "Selection wand added. Use /il wandmode pos1 or /il wandmode pos2, then click blocks while holding it."); });
                 case "connectionwand", "connwand" -> adminPlayer(sender, p -> { p.getInventory().addItem(plugin.getSelectionManager().createConnectionWand()); msg(p, "Connection wand added. Click 2 points on one outer room face to auto-detect connection direction and size. Optional: /il connectionmode [prefix]"); });
+                case "variationwand", "varwand" -> adminPlayer(sender, p -> { p.getInventory().addItem(plugin.getSelectionManager().createVariationWand()); msg(p, "Variation wand added. Use /il variationmode <category> <chancePercent> [prefix], then click 2 points."); });
                 case "wandmode" -> adminPlayer(sender, p -> { require(args, 2, "/il wandmode <pos1|pos2>"); plugin.getSelectionManager().setMode(p, args[1]); });
                 case "connectionmode", "connmode" -> adminPlayer(sender, p -> setConnectionMode(p, args));
                 case "pos1" -> adminPlayer(sender, p -> { plugin.getRoomManager().setPos1(p); msg(p, "Selection position 1 set."); });
                 case "pos2" -> adminPlayer(sender, p -> { plugin.getRoomManager().setPos2(p); msg(p, "Selection position 2 set."); });
-                case "clearconnections" -> adminPlayer(sender, p -> { plugin.getSelectionManager().clearStagedConnections(p); msg(p, "Staged connections cleared."); });
+                case "clearconnections" -> adminPlayer(sender, p -> { plugin.getSelectionManager().clearStagedConnections(p);
+        plugin.getSelectionManager().clearStagedVariations(p); msg(p, "Staged connections cleared."); });
+                case "clearvariations" -> adminPlayer(sender, p -> { plugin.getSelectionManager().clearStagedVariations(p); msg(p, "Staged variations cleared."); });
+                case "variationmode", "varmode" -> adminPlayer(sender, p -> setVariationMode(p, args));
                 case "addconnection" -> adminPlayer(sender, p -> addConnection(p, args));
                 case "saveroom", "editroom", "savedefault" -> adminPlayer(sender, p -> saveRoom(p, args));
                 case "deleteroom" -> { requireAdmin(sender); require(args, 2, "/il deleteroom <id>"); plugin.getRoomManager().delete(args[1]); msg(sender, "Room deleted live: " + args[1]); }
@@ -54,11 +58,20 @@ public class CommandHandler implements CommandExecutor, TabCompleter {
         plugin.getSelectionManager().setConnectionPrefix(p, prefix);
     }
 
+
+    private void setVariationMode(Player p, String[] args) {
+        require(args, 3, "/il variationmode <category> <chancePercent> [prefix]");
+        String prefix = args.length >= 4 ? args[3] : "var";
+        plugin.getSelectionManager().setVariationSettings(p, args[1], Double.parseDouble(args[2]), prefix);
+        msg(p, "Variation mode set: category=" + args[1] + " chance=" + args[2] + "% prefix=" + prefix);
+    }
+
     private void saveRoom(Player p, String[] args) {
         require(args, 3, "/il saveroom <id> <FILLER|BOOK|READ>");
         List<ConnectionPoint> cps = plugin.getSelectionManager().stagedConnections(p);
         Room room = plugin.getRoomManager().capture(p, args[1], RoomType.parse(args[2]), cps);
         plugin.getSelectionManager().clearStagedConnections(p);
+        plugin.getSelectionManager().clearStagedVariations(p);
         boolean generatedNow = plugin.getGenerationEngine().placeRoomImmediately(room.id());
         msg(p, "Room saved live: " + room.id() + " (" + room.type() + ")." + (generatedNow ? " Spawned instantly into the active library." : " It will be used automatically on future expansions."));
     }
@@ -87,7 +100,7 @@ public class CommandHandler implements CommandExecutor, TabCompleter {
     private void msg(CommandSender s, String m) { s.sendMessage(ChatColor.translateAlternateColorCodes('&', "&5[InfinityLibrary] &f" + m)); }
     private void help(CommandSender s) { msg(s, "Commands: /il gui, home, wand, connectionwand, wandmode, connectionmode, pos1, pos2, addconnection, saveroom, savedefault, editroom, deleteroom, listrooms, reset, setstart, book, reload"); }
     @Override public List<String> onTabComplete(CommandSender s, Command c, String a, String[] args) {
-        if (args.length == 1) return List.of("gui","stats","home","start","wand","connectionwand","connwand","wandmode","connectionmode","connmode","pos1","pos2","addconnection","clearconnections","saveroom","savedefault","editroom","deleteroom","listrooms","reset","setstart","book","reload").stream().filter(x -> x.startsWith(args[0].toLowerCase(Locale.ROOT))).toList();
+        if (args.length == 1) return List.of("gui","stats","home","start","wand","connectionwand","connwand","variationwand","varwand","wandmode","connectionmode","connmode","variationmode","varmode","pos1","pos2","addconnection","clearconnections","clearvariations","saveroom","savedefault","editroom","deleteroom","listrooms","reset","setstart","book","reload").stream().filter(x -> x.startsWith(args[0].toLowerCase(Locale.ROOT))).toList();
         if (args.length == 2 && args[0].equalsIgnoreCase("wandmode")) return List.of("pos1", "pos2");
         if (args.length == 2 && (args[0].equalsIgnoreCase("connectionmode") || args[0].equalsIgnoreCase("connmode"))) return List.of("conn");
         if (args.length == 2 && args[0].equalsIgnoreCase("book")) return List.of("public", "private", "edit");

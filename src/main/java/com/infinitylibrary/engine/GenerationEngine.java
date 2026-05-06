@@ -92,6 +92,21 @@ public class GenerationEngine {
                 save();
                 return;
             }
+            parent.generatedConnections().add(target.id());
+            sealConnection(parent, target);
+            save();
+        }
+    }
+
+    private void sealConnection(PlacedRoom parent, ConnectionPoint target) {
+        World w = ensureWorld();
+        Vector3i base = parent.origin().add(target.position());
+        Vector3i outward = faceVector(target.direction());
+        for (int dy=0;dy<target.height();dy++) for (int dw=-(target.width()/2);dw<=target.width()/2;dw++) {
+            int x = base.x() + outward.x(), y = base.y() + dy + outward.y(), z = base.z() + outward.z();
+            if (target.direction()==BlockFace.NORTH || target.direction()==BlockFace.SOUTH) x += dw;
+            else if (target.direction()==BlockFace.EAST || target.direction()==BlockFace.WEST) z += dw;
+            w.getBlockAt(x,y,z).setType(Material.SMOOTH_STONE, false);
         }
     }
 
@@ -119,6 +134,20 @@ public class GenerationEngine {
                 if (block.getType() == Material.CHISELED_BOOKSHELF) plugin.getBookStorageManager().populateBookshelf(block);
                 if (block.getState() instanceof Sign sign) updateLibrarySign(sign, pos);
             });
+        }
+        Map<String, List<VariationArea>> byCategory = new HashMap<>();
+        for (VariationArea v : room.variations()) byCategory.computeIfAbsent(v.category(), k -> new ArrayList<>()).add(v);
+        for (List<VariationArea> categoryVars : byCategory.values()) {
+            Collections.shuffle(categoryVars);
+            for (VariationArea v : categoryVars) {
+                if (Math.random() * 100.0 > v.chancePercent()) continue;
+                for (RoomBlock rb : v.blocks()) {
+                    Vector3i pos = origin.add(transform.transform(rb.position(), room.size()));
+                    BlockData data = Bukkit.createBlockData(rb.blockData()); rotateData(data, transform);
+                    placementQueue.add(() -> w.getBlockAt(pos.x(), pos.y(), pos.z()).setBlockData(data, false));
+                }
+                break;
+            }
         }
     }
 
