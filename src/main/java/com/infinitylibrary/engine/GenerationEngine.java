@@ -1,0 +1,172 @@
+package com.infinitylibrary.engine;
+
+import com.infinitylibrary.InfinityLibraryPlugin;
+import com.infinitylibrary.model.*;
+import com.infinitylibrary.room.RoomManager;
+import org.bukkit.Bukkit;
+import org.bukkit.Location;
+import org.bukkit.Material;
+import org.bukkit.World;
+import org.bukkit.WorldCreator;
+import org.bukkit.block.Block;
+import org.bukkit.block.Sign;
+import org.bukkit.block.BlockFace;
+import org.bukkit.block.data.BlockData;
+import org.bukkit.block.data.Directional;
+import org.bukkit.block.data.Rotatable;
+import org.bukkit.configuration.ConfigurationSection;
+import org.bukkit.configuration.file.YamlConfiguration;
+import org.bukkit.entity.Player;
+
+import java.io.File;
+import java.io.IOException;
+import java.util.*;
+import java.util.concurrent.ConcurrentLinkedQueue;
+
+public class GenerationEngine {
+    private final InfinityLibraryPlugin plugin;
+    private final RoomManager roomManager;
+    private final File file;
+    private final List<PlacedRoom> placed = new ArrayList<>();
+    private final Queue<Runnable> placementQueue = new ConcurrentLinkedQueue<>();
+    private boolean running;
+    private int taskId = -1;
+
+    public GenerationEngine(InfinityLibraryPlugin plugin, RoomManager roomManager) {
+        this.plugin = plugin; this.roomManager = roomManager; this.file = new File(plugin.getDataFolder(), "generated.yml");
+    }
+
+    public void start() {
+        running = true;
+        load();
+        ensureWorld();
+        if (placed.isEmpty()) resetToStart();
+        int perTick = plugin.getConfig().getInt("generation.placement-blocks-per-tick", 1800);
+        taskId = Bukkit.getScheduler().scheduleSyncRepeatingTask(plugin, () -> { for (int i=0;i<perTick;i++) { Runnable r = placementQueue.poll(); if (r == null) break; r.run(); } }, 1L, 1L);
+    }
+    public void stop() { running = false; if (taskId != -1) Bukkit.getScheduler().cancelTask(taskId); save(); }
+    public World ensureWorld() {
+        String name = plugin.getConfig().getString("world", "InfinityLibrary");
+        World w = Bukkit.getWorld(name);
+        if (w == null) w = Bukkit.createWorld(new WorldCreator(name).environment(World.Environment.NORMAL));
+        return Objects.requireNonNull(w);
+    }
+
+    public void tickPlayer(Player player) {
+        if (!running || !player.getWorld().getName().equals(plugin.getConfig().getString("world", "InfinityLibrary"))) return;
+        double radius = plugin.getConfig().getDouble("proximity-radius", 9.0);
+        Location loc = player.getLocation();
+        List<Expansion> expansions = new ArrayList<>();
+        synchronized (placed) {
+            for (PlacedRoom pr : placed) roomManager.get(pr.roomId()).ifPresent(room -> {
+                for (ConnectionPoint cp : room.connections()) if (!pr.generatedConnections().contains(cp.id())) {
+                    Location cLoc = pr.origin().add(cp.position()).toLocation(player.getWorld()).add(0.5, 0.5, 0.5);
+                    if (cLoc.distanceSquared(loc) <= radius * radius) expansions.add(new Expansion(pr, cp));
+                }
+            });
+        }
+        int max = plugin.getConfig().getInt("generation.max-rooms-per-tick", 1);
+        for (int i=0; i<Math.min(max, expansions.size()); i++) expand(expansions.get(i));
+    }
+
+    private void expand(Expansion expansion) {
+        PlacedRoom parent = expansion.parent(); ConnectionPoint target = expansion.point();
+        if (parent.generatedConnections().contains(target.id())) return;
+        List<RoomManager.RoomSelection> selections = roomManager.compatibleSelections(target, Math.random() < 0.35);
+        int retries = Math.min(selections.size(), plugin.getConfig().getInt("generation.retry-room-selection", 16));
+        Vector3i targetWorld = parent.origin().add(target.position());
+        Vector3i attach = faceVector(target.direction());
+        synchronized (placed) {
+            for (int attempt = 0; attempt < retries; attempt++) {
+                RoomManager.RoomSelection s = selections.get(attempt);
+                Room room = s.room(); RoomTransform transform = s.transform();
+                ConnectionPoint transformedCp = s.localConnection().transform(transform, room.size());
+                Vector3i transformedSize = transform.transformedSize(room.size());
+                Vector3i origin = targetWorld.add(attach).subtract(transformedCp.position());
+                if (!isSafe(origin, transformedSize)) continue;
+                parent.generatedConnections().add(target.id());
+                PlacedRoom pr = new PlacedRoom(UUID.randomUUID(), room.id(), origin, transformedSize);
+                pr.generatedConnections().add(transformedCp.id());
+                placed.add(pr);
+                queuePlacement(room, origin, transform);
+                save();
+                return;
+            }
+        }
+    }
+
+    public void resetToStart() {
+        World w = ensureWorld();
+        synchronized (placed) {
+            for (PlacedRoom pr : placed) clearBox(w, pr.origin(), pr.size());
+            placed.clear(); placementQueue.clear();
+            Room start = roomManager.get(plugin.getConfig().getString("generation.start-room-id", "builtin_start")).orElseThrow();
+            Vector3i origin = new Vector3i(plugin.getConfig().getInt("start-location.x"), plugin.getConfig().getInt("start-location.y"), plugin.getConfig().getInt("start-location.z"));
+            PlacedRoom pr = new PlacedRoom(UUID.randomUUID(), start.id(), origin, start.size());
+            placed.add(pr); queuePlacement(start, origin, RoomTransform.IDENTITY);
+        }
+        save();
+    }
+
+    private void queuePlacement(Room room, Vector3i origin, RoomTransform transform) {
+        World w = ensureWorld();
+        for (RoomBlock rb : room.blocks()) {
+            Vector3i pos = origin.add(transform.transform(rb.position(), room.size()));
+            BlockData data = Bukkit.createBlockData(rb.blockData()); rotateData(data, transform);
+            placementQueue.add(() -> {
+                Block block = w.getBlockAt(pos.x(), pos.y(), pos.z());
+                block.setBlockData(data, false);
+                if (block.getType() == Material.CHISELED_BOOKSHELF) plugin.getBookStorageManager().populateBookshelf(block);
+                if (block.getState() instanceof Sign sign) updateLibrarySign(sign, pos);
+            });
+        }
+    }
+
+    private void rotateData(BlockData data, RoomTransform transform) {
+        if (data instanceof Directional d) d.setFacing(transform.transform(d.getFacing()));
+        if (data instanceof Rotatable r) r.setRotation(transform.transform(r.getRotation()));
+    }
+
+    private void updateLibrarySign(Sign sign, Vector3i pos) {
+        if (placed.size() < plugin.getConfig().getInt("generation.sign-min-rooms", 6)) return;
+        Vector3i start = new Vector3i(plugin.getConfig().getInt("start-location.x"), plugin.getConfig().getInt("start-location.y"), plugin.getConfig().getInt("start-location.z"));
+        sign.setLine(0, "Infinity Library");
+        sign.setLine(1, "Start: " + directionToward(pos, start));
+        sign.setLine(2, "Books: explore");
+        sign.setLine(3, "Rooms: " + placed.size());
+        sign.update(true, false);
+    }
+
+    private String directionToward(Vector3i from, Vector3i to) {
+        int dx = to.x() - from.x(), dy = to.y() - from.y(), dz = to.z() - from.z();
+        if (Math.abs(dy) > Math.max(Math.abs(dx), Math.abs(dz))) return dy > 0 ? "UP" : "DOWN";
+        if (Math.abs(dx) > Math.abs(dz)) return dx > 0 ? "EAST" : "WEST";
+        return dz > 0 ? "SOUTH" : "NORTH";
+    }
+
+    private boolean isSafe(Vector3i origin, Vector3i size) {
+        for (PlacedRoom existing : placed) if (existing.overlaps(origin, size)) return false;
+        World w = ensureWorld();
+        for (int x=origin.x(); x<origin.x()+size.x(); x++) for (int y=origin.y(); y<origin.y()+size.y(); y++) for (int z=origin.z(); z<origin.z()+size.z(); z++) {
+            Material m = w.getBlockAt(x,y,z).getType();
+            if (m != Material.AIR && m != Material.CAVE_AIR && m != Material.VOID_AIR) return false;
+        }
+        return true;
+    }
+
+    private void clearBox(World w, Vector3i o, Vector3i s) {
+        for (int x=o.x(); x<o.x()+s.x(); x++) for (int y=o.y(); y<o.y()+s.y(); y++) for (int z=o.z(); z<o.z()+s.z(); z++) w.getBlockAt(x,y,z).setType(Material.AIR, false);
+    }
+    private Vector3i faceVector(BlockFace f) { return new Vector3i(f.getModX(), f.getModY(), f.getModZ()); }
+
+    public void save() {
+        YamlConfiguration y = new YamlConfiguration(); ConfigurationSection root = y.createSection("rooms"); int i=0;
+        synchronized (placed) { for (PlacedRoom pr : placed) { ConfigurationSection s = root.createSection(String.valueOf(i++)); s.set("uuid", pr.instanceId().toString()); s.set("room-id", pr.roomId()); pr.origin().write(s.createSection("origin")); pr.size().write(s.createSection("size")); s.set("generated-connections", new ArrayList<>(pr.generatedConnections())); } }
+        try { y.save(file); } catch (IOException e) { plugin.getLogger().severe("Unable to save generated.yml: " + e.getMessage()); }
+    }
+    private void load() {
+        placed.clear(); if (!file.exists()) return; YamlConfiguration y = YamlConfiguration.loadConfiguration(file); ConfigurationSection root = y.getConfigurationSection("rooms"); if (root == null) return;
+        for (String key : root.getKeys(false)) { ConfigurationSection s = root.getConfigurationSection(key); PlacedRoom pr = new PlacedRoom(UUID.fromString(s.getString("uuid")), s.getString("room-id"), Vector3i.read(s.getConfigurationSection("origin")), Vector3i.read(s.getConfigurationSection("size"))); pr.generatedConnections().addAll(s.getStringList("generated-connections")); placed.add(pr); }
+    }
+    private record Expansion(PlacedRoom parent, ConnectionPoint point) {}
+}
