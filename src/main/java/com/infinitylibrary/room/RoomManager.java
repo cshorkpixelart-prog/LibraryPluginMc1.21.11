@@ -59,11 +59,21 @@ public class RoomManager {
     public void setPos1(Player p, Location location) { pos1.put(p.getUniqueId(), Vector3i.from(location)); }
     public void setPos2(Player p, Location location) { pos2.put(p.getUniqueId(), Vector3i.from(location)); }
     public Vector3i relativeToSelection(Player p, Location location) {
-        Vector3i a = pos1.get(p.getUniqueId()), b = pos2.get(p.getUniqueId());
-        if (a == null || b == null) throw new IllegalArgumentException("Set both selection positions before using the connection wand");
-        int minX = Math.min(a.x(), b.x()), minY = Math.min(a.y(), b.y()), minZ = Math.min(a.z(), b.z());
+        SelectionBounds bounds = selectionBounds(p);
+        int minX = bounds.min().x(), minY = bounds.min().y(), minZ = bounds.min().z();
         return new Vector3i(location.getBlockX() - minX, location.getBlockY() - minY, location.getBlockZ() - minZ);
     }
+
+    public SelectionBounds selectionBounds(Player p) {
+        Vector3i a = pos1.get(p.getUniqueId()), b = pos2.get(p.getUniqueId());
+        if (a == null || b == null) throw new IllegalArgumentException("Set both selection positions before using the connection wand");
+        return new SelectionBounds(
+                new Vector3i(Math.min(a.x(), b.x()), Math.min(a.y(), b.y()), Math.min(a.z(), b.z())),
+                new Vector3i(Math.max(a.x(), b.x()), Math.max(a.y(), b.y()), Math.max(a.z(), b.z()))
+        );
+    }
+
+    public record SelectionBounds(Vector3i min, Vector3i max) {}
 
     public Room capture(Player player, String id, RoomType type, List<ConnectionPoint> connections) {
         Vector3i a = pos1.get(player.getUniqueId()), b = pos2.get(player.getUniqueId());

@@ -26,6 +26,7 @@ public class SelectionManager {
     private final Map<UUID, ConnectionSettings> connectionSettings = new HashMap<>();
     private final Map<UUID, List<ConnectionPoint>> stagedConnections = new HashMap<>();
     private final Map<UUID, Integer> connectionCounters = new HashMap<>();
+    private final Map<UUID, Vector3i> pendingConnectionStart = new HashMap<>();
 
     public SelectionManager(InfinityLibraryPlugin plugin) {
         this.plugin = plugin;
@@ -90,6 +91,7 @@ public class SelectionManager {
     public void clearStagedConnections(Player player) {
         stagedConnections.remove(player.getUniqueId());
         connectionCounters.remove(player.getUniqueId());
+        pendingConnectionStart.remove(player.getUniqueId());
     }
 
     public boolean handle(Player player, Action action, Block clickedBlock) {
@@ -112,16 +114,54 @@ public class SelectionManager {
     private boolean handleConnectionWand(Player player, Action action, Block clickedBlock) {
         if (action != Action.LEFT_CLICK_BLOCK && action != Action.RIGHT_CLICK_BLOCK) return false;
         try {
-            ConnectionSettings settings = connectionSettings.getOrDefault(player.getUniqueId(), new ConnectionSettings(BlockFace.NORTH, 3, 3, "conn"));
             Vector3i relative = plugin.getRoomManager().relativeToSelection(player, clickedBlock.getLocation());
+            UUID playerId = player.getUniqueId();
+            Vector3i first = pendingConnectionStart.get(playerId);
+            if (first == null) {
+                pendingConnectionStart.put(playerId, relative);
+                player.sendMessage(ChatColor.AQUA + "Connection point 1 set at " + relative + ". Click point 2 to finish this connection.");
+                return true;
+            }
+            pendingConnectionStart.remove(playerId);
+            RoomBounds bounds = RoomBounds.from(plugin.getRoomManager().selectionBounds(player));
+            Vector3i min = min(first, relative);
+            Vector3i max = max(first, relative);
+            BlockFace face = detectOutwardFace(min, max, bounds);
+            int width = face == BlockFace.NORTH || face == BlockFace.SOUTH ? max.x() - min.x() + 1 : face == BlockFace.EAST || face == BlockFace.WEST ? max.z() - min.z() + 1 : Math.max(max.x() - min.x() + 1, max.z() - min.z() + 1);
+            int height = face == BlockFace.UP || face == BlockFace.DOWN ? 1 : max.y() - min.y() + 1;
+            Vector3i center = new Vector3i((min.x() + max.x()) / 2, min.y(), (min.z() + max.z()) / 2);
+            ConnectionSettings settings = connectionSettings.getOrDefault(playerId, new ConnectionSettings(face, width, height, "conn"));
             int number = connectionCounters.merge(player.getUniqueId(), 1, Integer::sum);
-            ConnectionPoint connectionPoint = new ConnectionPoint(settings.prefix() + "_" + number, relative, settings.direction(), settings.width(), settings.height());
+            ConnectionPoint connectionPoint = new ConnectionPoint(settings.prefix() + "_" + number, center, face, width, height);
             addStagedConnection(player, connectionPoint);
-            player.sendMessage(ChatColor.AQUA + "Staged connection " + connectionPoint.id() + " at " + relative + " facing " + settings.direction().name() + ".");
+            player.sendMessage(ChatColor.AQUA + "Staged connection " + connectionPoint.id() + " at " + center + " facing " + face.name() + " (" + width + "x" + height + ").");
         } catch (IllegalArgumentException ex) {
             player.sendMessage(ChatColor.RED + ex.getMessage());
         }
         return true;
+    }
+
+    private BlockFace detectOutwardFace(Vector3i min, Vector3i max, RoomBounds bounds) {
+        List<BlockFace> touchingFaces = new ArrayList<>();
+        if (min.x() == bounds.minX) touchingFaces.add(BlockFace.WEST);
+        if (max.x() == bounds.maxX) touchingFaces.add(BlockFace.EAST);
+        if (min.y() == bounds.minY) touchingFaces.add(BlockFace.DOWN);
+        if (max.y() == bounds.maxY) touchingFaces.add(BlockFace.UP);
+        if (min.z() == bounds.minZ) touchingFaces.add(BlockFace.NORTH);
+        if (max.z() == bounds.maxZ) touchingFaces.add(BlockFace.SOUTH);
+        if (touchingFaces.size() != 1) throw new IllegalArgumentException("Connection selection must touch exactly one outer room face. Current selection touches " + touchingFaces.size() + ".");
+        return touchingFaces.get(0);
+    }
+
+    private Vector3i min(Vector3i a, Vector3i b) { return new Vector3i(Math.min(a.x(), b.x()), Math.min(a.y(), b.y()), Math.min(a.z(), b.z())); }
+    private Vector3i max(Vector3i a, Vector3i b) { return new Vector3i(Math.max(a.x(), b.x()), Math.max(a.y(), b.y()), Math.max(a.z(), b.z())); }
+
+    private record RoomBounds(int minX, int minY, int minZ, int maxX, int maxY, int maxZ) {
+        static RoomBounds from(com.infinitylibrary.room.RoomManager.SelectionBounds bounds) {
+            Vector3i min = bounds.min();
+            Vector3i max = bounds.max();
+            return new RoomBounds(0, 0, 0, max.x() - min.x(), max.y() - min.y(), max.z() - min.z());
+        }
     }
 
     private boolean isSupportedDirection(BlockFace face) {

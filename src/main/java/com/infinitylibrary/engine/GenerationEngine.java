@@ -159,6 +159,50 @@ public class GenerationEngine {
     }
     private Vector3i faceVector(BlockFace f) { return new Vector3i(f.getModX(), f.getModY(), f.getModZ()); }
 
+    public boolean placeRoomImmediately(String roomId) {
+        Room room = roomManager.get(roomId).orElse(null);
+        if (room == null || room.connections().isEmpty()) return false;
+        List<PlacedRoom> shuffledPlaced;
+        synchronized (placed) {
+            shuffledPlaced = new ArrayList<>(placed);
+        }
+        Collections.shuffle(shuffledPlaced);
+        for (PlacedRoom parent : shuffledPlaced) {
+            Room parentRoom = roomManager.get(parent.roomId()).orElse(null);
+            if (parentRoom == null) continue;
+            List<ConnectionPoint> open = new ArrayList<>();
+            for (ConnectionPoint cp : parentRoom.connections()) if (!parent.generatedConnections().contains(cp.id())) open.add(cp);
+            Collections.shuffle(open);
+            for (ConnectionPoint target : open) {
+                Vector3i targetWorld = parent.origin().add(target.position());
+                Vector3i attach = faceVector(target.direction());
+                for (ConnectionPoint cp : room.connections()) {
+                    for (RoomTransform transform : RoomTransform.all()) {
+                        ConnectionPoint transformedCp = cp.transform(transform, room.size());
+                        if (!target.compatibleWith(transformedCp)) continue;
+                        Vector3i transformedSize = transform.transformedSize(room.size());
+                        Vector3i origin = targetWorld.add(attach).subtract(transformedCp.position());
+                        synchronized (placed) {
+                            if (!isSafe(origin, transformedSize)) continue;
+                            parent.generatedConnections().add(target.id());
+                            PlacedRoom pr = new PlacedRoom(UUID.randomUUID(), room.id(), origin, transformedSize);
+                            pr.generatedConnections().add(transformedCp.id());
+                            placed.add(pr);
+                        }
+                        queuePlacement(room, origin, transform);
+                        while (!placementQueue.isEmpty()) {
+                            Runnable run = placementQueue.poll();
+                            if (run != null) run.run();
+                        }
+                        save();
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
     public void save() {
         YamlConfiguration y = new YamlConfiguration(); ConfigurationSection root = y.createSection("rooms"); int i=0;
         synchronized (placed) { for (PlacedRoom pr : placed) { ConfigurationSection s = root.createSection(String.valueOf(i++)); s.set("uuid", pr.instanceId().toString()); s.set("room-id", pr.roomId()); pr.origin().write(s.createSection("origin")); pr.size().write(s.createSection("size")); s.set("generated-connections", new ArrayList<>(pr.generatedConnections())); } }

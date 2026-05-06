@@ -61,7 +61,8 @@ public class CommandHandler implements CommandExecutor, TabCompleter {
         List<ConnectionPoint> cps = plugin.getSelectionManager().stagedConnections(p);
         Room room = plugin.getRoomManager().capture(p, args[1], RoomType.parse(args[2]), cps);
         plugin.getSelectionManager().clearStagedConnections(p);
-        msg(p, "Room saved live: " + room.id() + " (" + room.type() + "). Built-in ids are editable and now persist too.");
+        boolean generatedNow = plugin.getGenerationEngine().placeRoomImmediately(room.id());
+        msg(p, "Room saved live: " + room.id() + " (" + room.type() + ")." + (generatedNow ? " Spawned instantly into the active library." : " It will be used automatically on future expansions."));
     }
 
     private void teleportStart(Player player) {
