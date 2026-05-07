@@ -50,8 +50,13 @@ public class RoomManager {
     public Collection<Room> allRooms() { return Collections.unmodifiableCollection(rooms.values()); }
     public Optional<Room> get(String id) { return Optional.ofNullable(rooms.get(id)); }
     public void delete(String id) {
-        if (id.startsWith("builtin_")) throw new IllegalArgumentException("Built-in rooms can be edited with /il savedefault, but not deleted.");
         rooms.remove(id);
+        String startId = plugin.getConfig().getString("generation.start-room-id", "builtin_start");
+        if (id.equals(startId)) {
+            String replacement = rooms.keySet().stream().findFirst().orElse("builtin_start");
+            plugin.getConfig().set("generation.start-room-id", replacement);
+            plugin.saveConfig();
+        }
         save();
     }
     public void setPos1(Player p) { setPos1(p, p.getLocation()); }
