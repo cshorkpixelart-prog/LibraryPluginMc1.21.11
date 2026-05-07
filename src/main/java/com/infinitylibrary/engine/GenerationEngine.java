@@ -76,14 +76,15 @@ public class GenerationEngine {
         List<RoomManager.RoomSelection> selections = roomManager.compatibleSelections(target, Math.random() < 0.35);
         int retries = Math.min(selections.size(), plugin.getConfig().getInt("generation.retry-room-selection", 16));
         Vector3i targetWorld = parent.origin().add(target.position());
+        Vector3i attach = faceVector(target.direction());
         synchronized (placed) {
             for (int attempt = 0; attempt < retries; attempt++) {
                 RoomManager.RoomSelection s = selections.get(attempt);
                 Room room = s.room(); RoomTransform transform = s.transform();
                 ConnectionPoint transformedCp = s.localConnection().transform(transform, room.size());
                 Vector3i transformedSize = transform.transformedSize(room.size());
-                Vector3i origin = targetWorld.subtract(transformedCp.position());
-                if (!isSafe(origin, transformedSize, connectionAreaBlocks(parent.origin(), target))) continue;
+                Vector3i origin = targetWorld.add(attach).subtract(transformedCp.position());
+                if (!isSafe(origin, transformedSize)) continue;
                 parent.generatedConnections().add(target.id());
                 PlacedRoom pr = new PlacedRoom(UUID.randomUUID(), room.id(), origin, transformedSize);
                 pr.generatedConnections().add(transformedCp.id());
@@ -179,33 +180,17 @@ public class GenerationEngine {
         return dz > 0 ? "SOUTH" : "NORTH";
     }
 
-    private boolean isSafe(Vector3i origin, Vector3i size, Set<Vector3i> allowedReplace) {
+    private boolean isSafe(Vector3i origin, Vector3i size) {
         for (PlacedRoom existing : placed) if (existing.overlaps(origin, size)) return false;
         World w = ensureWorld();
         for (int x=origin.x(); x<origin.x()+size.x(); x++) for (int y=origin.y(); y<origin.y()+size.y(); y++) for (int z=origin.z(); z<origin.z()+size.z(); z++) {
             Material m = w.getBlockAt(x,y,z).getType();
-            if (m != Material.AIR && m != Material.CAVE_AIR && m != Material.VOID_AIR && !allowedReplace.contains(new Vector3i(x,y,z))) return false;
+            if (m != Material.AIR && m != Material.CAVE_AIR && m != Material.VOID_AIR) return false;
         }
         return true;
     }
 
 
-    private Set<Vector3i> connectionAreaBlocks(Vector3i parentOrigin, ConnectionPoint cp) {
-        Set<Vector3i> points = new HashSet<>();
-        Vector3i base = parentOrigin.add(cp.position());
-        for (int dy=0;dy<cp.height();dy++) {
-            if (cp.direction() == BlockFace.UP || cp.direction() == BlockFace.DOWN) {
-                for (int wx=-(cp.width()/2);wx<=cp.width()/2;wx++) for (int wz=-(cp.width()/2);wz<=cp.width()/2;wz++) points.add(new Vector3i(base.x()+wx, base.y(), base.z()+wz));
-            } else {
-                for (int w=-(cp.width()/2);w<=cp.width()/2;w++) {
-                    int x=base.x(), y=base.y()+dy, z=base.z();
-                    if (cp.direction()==BlockFace.NORTH || cp.direction()==BlockFace.SOUTH) x += w; else z += w;
-                    points.add(new Vector3i(x,y,z));
-                }
-            }
-        }
-        return points;
-    }
     private void clearBox(World w, Vector3i o, Vector3i s) {
         for (int x=o.x(); x<o.x()+s.x(); x++) for (int y=o.y(); y<o.y()+s.y(); y++) for (int z=o.z(); z<o.z()+s.z(); z++) w.getBlockAt(x,y,z).setType(Material.AIR, false);
     }
@@ -241,14 +226,15 @@ public class GenerationEngine {
             Collections.shuffle(open);
             for (ConnectionPoint target : open) {
                 Vector3i targetWorld = parent.origin().add(target.position());
+                Vector3i attach = faceVector(target.direction());
                 for (ConnectionPoint cp : room.connections()) {
                     for (RoomTransform transform : RoomTransform.all()) {
                         ConnectionPoint transformedCp = cp.transform(transform, room.size());
                         if (!target.compatibleWith(transformedCp)) continue;
                         Vector3i transformedSize = transform.transformedSize(room.size());
-                        Vector3i origin = targetWorld.subtract(transformedCp.position());
+                        Vector3i origin = targetWorld.add(attach).subtract(transformedCp.position());
                         synchronized (placed) {
-                            if (!isSafe(origin, transformedSize, connectionAreaBlocks(parent.origin(), target))) continue;
+                            if (!isSafe(origin, transformedSize)) continue;
                             parent.generatedConnections().add(target.id());
                             PlacedRoom pr = new PlacedRoom(UUID.randomUUID(), room.id(), origin, transformedSize);
                             pr.generatedConnections().add(transformedCp.id());
