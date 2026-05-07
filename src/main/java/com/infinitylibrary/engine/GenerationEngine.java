@@ -76,14 +76,13 @@ public class GenerationEngine {
         List<RoomManager.RoomSelection> selections = roomManager.compatibleSelections(target, Math.random() < 0.35);
         int retries = Math.min(selections.size(), plugin.getConfig().getInt("generation.retry-room-selection", 16));
         Vector3i targetWorld = parent.origin().add(target.position());
-        Vector3i attach = faceVector(target.direction());
         synchronized (placed) {
             for (int attempt = 0; attempt < retries; attempt++) {
                 RoomManager.RoomSelection s = selections.get(attempt);
                 Room room = s.room(); RoomTransform transform = s.transform();
                 ConnectionPoint transformedCp = s.localConnection().transform(transform, room.size());
                 Vector3i transformedSize = transform.transformedSize(room.size());
-                Vector3i origin = targetWorld.add(attach).subtract(transformedCp.position());
+                Vector3i origin = targetWorld.subtract(transformedCp.position());
                 if (!isSafe(origin, transformedSize)) continue;
                 parent.generatedConnections().add(target.id());
                 PlacedRoom pr = new PlacedRoom(UUID.randomUUID(), room.id(), origin, transformedSize);
@@ -225,13 +224,12 @@ public class GenerationEngine {
             Collections.shuffle(open);
             for (ConnectionPoint target : open) {
                 Vector3i targetWorld = parent.origin().add(target.position());
-                Vector3i attach = faceVector(target.direction());
                 for (ConnectionPoint cp : room.connections()) {
                     for (RoomTransform transform : RoomTransform.all()) {
                         ConnectionPoint transformedCp = cp.transform(transform, room.size());
                         if (!target.compatibleWith(transformedCp)) continue;
                         Vector3i transformedSize = transform.transformedSize(room.size());
-                        Vector3i origin = targetWorld.add(attach).subtract(transformedCp.position());
+                        Vector3i origin = targetWorld.subtract(transformedCp.position());
                         synchronized (placed) {
                             if (!isSafe(origin, transformedSize)) continue;
                             parent.generatedConnections().add(target.id());
