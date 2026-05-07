@@ -44,6 +44,8 @@ public class BookStorageManager {
     private final NamespacedKey commentsKey;
     private final Map<UUID, StoredBook> books = new ConcurrentHashMap<>();
     private final Set<UUID> awaitingSearch = ConcurrentHashMap.newKeySet();
+    private final Map<UUID, PendingBookMetadata> pendingMetadata = new ConcurrentHashMap<>();
+    private final Map<String, String> shelfCategories = new ConcurrentHashMap<>();
     private YamlConfiguration daily;
 
     public BookStorageManager(InfinityLibraryPlugin plugin) {
@@ -70,6 +72,8 @@ public class BookStorageManager {
             try { StoredBook b = StoredBook.read(UUID.fromString(key), root.getConfigurationSection(key)); books.put(b.id(), b); }
             catch (Exception ex) { plugin.getLogger().warning("Skipping invalid stored book " + key + ": " + ex.getMessage()); }
         }
+        ConfigurationSection shelves = y.getConfigurationSection("shelf-categories");
+        if (shelves != null) for (String key : shelves.getKeys(false)) shelfCategories.put(key, shelves.getString(key, ""));
     }
 
     public void saveAsync() { Bukkit.getScheduler().runTaskAsynchronously(plugin, this::saveNow); }
@@ -77,6 +81,8 @@ public class BookStorageManager {
         YamlConfiguration y = new YamlConfiguration();
         ConfigurationSection root = y.createSection("books");
         for (StoredBook b : books.values()) b.write(root.createSection(b.id().toString()));
+        ConfigurationSection shelfRoot = y.createSection("shelf-categories");
+        for (var e : shelfCategories.entrySet()) shelfRoot.set(e.getKey(), e.getValue());
         try { y.save(file); if (daily != null) daily.save(dailyFile); } catch (IOException e) { plugin.getLogger().severe("Unable to save book data: " + e.getMessage()); }
     }
 
@@ -100,8 +106,16 @@ public class BookStorageManager {
         UUID id = UUID.randomUUID();
         BookOwnership ownership = ownership(meta, contributor);
         PersistentDataContainer pdc = meta.getPersistentDataContainer();
+        String fp = fingerprint(meta);
+        Optional<StoredBook> existing = books.values().stream().filter(b -> fp.equals(fingerprint((BookMeta) Objects.requireNonNull(b.toItemStack().getItemMeta())))).findFirst();
+        if (existing.isPresent()) { books.put(existing.get().id(), existing.get().withLocation(serializeLocation(shelfLocation))); saveAsync(); return; }
         books.put(id, new StoredBook(id, contributor.getUniqueId(), contributor.getName(), ownership.ownerUuid(), ownership.ownerName(), ownership.isPublic(), safe(meta.getTitle()), safe(meta.getAuthor()), List.copyOf(meta.getPages()), stack.serialize(), Instant.now().toString(), serializeLocation(shelfLocation), safe(pdc.get(categoryKey, PersistentDataType.STRING)), safe(pdc.get(tagsKey, PersistentDataType.STRING)), safe(pdc.get(ratingKey, PersistentDataType.STRING)), safe(pdc.get(commentsKey, PersistentDataType.STRING))));
         saveAsync();
+    }
+
+    public void beginMetadataPrompt(Player player, ItemStack stack, Location shelfLocation) {
+        pendingMetadata.put(player.getUniqueId(), new PendingBookMetadata(stack.clone(), shelfLocation));
+        player.sendMessage(ChatColor.LIGHT_PURPLE + "Enter book metadata as: <category>|<rating>|<comments> (or cancel)");
     }
 
     public void setHeldBookMetadata(Player player, String category, String tags, String rating, String comments) {
@@ -164,6 +178,30 @@ public class BookStorageManager {
         });
         return true;
     }
+
+    public boolean handleMetadataChat(Player player, String input) {
+        PendingBookMetadata pending = pendingMetadata.remove(player.getUniqueId());
+        if (pending == null) return false;
+        if (input.equalsIgnoreCase("cancel")) { player.sendMessage(ChatColor.GRAY + "Book metadata input cancelled."); return true; }
+        String[] parts = input.split("\\|", 3);
+        String category = parts.length > 0 ? parts[0] : "general";
+        String rating = parts.length > 1 ? parts[1] : "unrated";
+        String comments = parts.length > 2 ? parts[2] : "";
+        if (pending.stack().getItemMeta() instanceof BookMeta meta) {
+            meta.getPersistentDataContainer().set(categoryKey, PersistentDataType.STRING, category);
+            meta.getPersistentDataContainer().set(ratingKey, PersistentDataType.STRING, rating);
+            meta.getPersistentDataContainer().set(commentsKey, PersistentDataType.STRING, comments);
+            pending.stack().setItemMeta(meta);
+        }
+        recordBook(player, pending.stack(), pending.shelfLocation());
+        player.sendMessage(ChatColor.GREEN + "Book saved with metadata.");
+        return true;
+    }
+
+    public void setShelfCategory(Location shelf, String category) { shelfCategories.put(serializeLocation(shelf), category); saveAsync(); }
+    public String shelfCategory(Location shelf) { return shelfCategories.getOrDefault(serializeLocation(shelf), ""); }
+    private String fingerprint(BookMeta meta) { return safe(meta.getTitle()) + "|" + safe(meta.getAuthor()) + "|" + String.join("\n", meta.getPages()); }
+    private record PendingBookMetadata(ItemStack stack, Location shelfLocation) {}
 
     public boolean canRead(Player player, ItemStack item) {
         if (item == null || item.getType() != Material.WRITTEN_BOOK || !item.hasItemMeta()) return true;

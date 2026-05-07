@@ -39,7 +39,10 @@ public class BookListener implements Listener {
             if (e.getClickedBlock().getType() == Material.LECTERN) { plugin.getGuiManager().openLectern(e.getPlayer()); e.setCancelled(true); return; }
             if (e.getClickedBlock().getType() == Material.CHISELED_BOOKSHELF) {
                 ItemStack item = e.getItem();
-                if (item != null && item.getType() == Material.WRITTEN_BOOK) plugin.getBookStorageManager().recordBook(e.getPlayer(), item.clone(), e.getClickedBlock().getLocation());
+                if (item != null && item.getType() == Material.WRITTEN_BOOK) {
+                    plugin.getBookStorageManager().beginMetadataPrompt(e.getPlayer(), item.clone(), e.getClickedBlock().getLocation());
+                    e.setCancelled(true);
+                }
                 return;
             }
         }
@@ -66,6 +69,7 @@ public class BookListener implements Listener {
     }
 
     @EventHandler public void onSearchChat(AsyncPlayerChatEvent e) {
+        if (plugin.getBookStorageManager().handleMetadataChat(e.getPlayer(), e.getMessage())) { e.setCancelled(true); return; }
         if (plugin.getBookStorageManager().handleSearchChat(e.getPlayer(), e.getMessage())) e.setCancelled(true);
     }
 }
