@@ -37,6 +37,8 @@ public class CommandHandler implements CommandExecutor, TabCompleter {
                 case "applyvariations" -> adminPlayer(sender, p -> applyVariations(p, args));
                 case "setrange" -> adminPlayer(sender, p -> setRange(p, args));
                 case "genrange" -> adminPlayer(sender, p -> generateRange(p));
+                case "toggleblocking" -> adminPlayer(sender, p -> toggleBlocking(p));
+                case "setblocker" -> adminPlayer(sender, p -> setBlocker(p, args));
                 case "deleteroom" -> { requireAdmin(sender); require(args, 2, "/il deleteroom <id>"); plugin.getRoomManager().delete(args[1]); msg(sender, "Room deleted live: " + args[1]); }
                 case "listrooms" -> msg(sender, "Rooms: " + String.join(", ", plugin.getRoomManager().allRooms().stream().map(Room::id).toList()));
                 case "reset" -> { requireAdmin(sender); plugin.getGenerationEngine().resetToStart(); msg(sender, "Infinity Library reset to only the starting room."); }
@@ -104,6 +106,22 @@ public class CommandHandler implements CommandExecutor, TabCompleter {
         msg(p, "Generated " + generated + " room(s) around your position.");
     }
 
+    private void toggleBlocking(Player p) {
+        boolean enabled = plugin.getConfig().getBoolean("generation.path-blocking.enabled", true);
+        plugin.getConfig().set("generation.path-blocking.enabled", !enabled);
+        plugin.saveConfig();
+        msg(p, "Path blocking is now " + (!enabled ? "enabled" : "disabled") + ".");
+    }
+
+    private void setBlocker(Player p, String[] args) {
+        require(args, 2, "/il setblocker <material>");
+        Material m = Material.matchMaterial(args[1]);
+        if (m == null || !m.isBlock()) throw new IllegalArgumentException("Invalid block material");
+        plugin.getConfig().set("generation.path-blocking.material", m.name());
+        plugin.saveConfig();
+        msg(p, "Path blocker material set to " + m.name() + ".");
+    }
+
     private void teleportStart(Player player) {
         World world = plugin.getGenerationEngine().ensureWorld();
         Location loc = new Location(world, plugin.getConfig().getInt("start-location.x") + 0.5, plugin.getConfig().getInt("start-location.y") + 1.0, plugin.getConfig().getInt("start-location.z") + 0.5, (float) plugin.getConfig().getDouble("start-location.yaw"), (float) plugin.getConfig().getDouble("start-location.pitch"));
@@ -126,9 +144,9 @@ public class CommandHandler implements CommandExecutor, TabCompleter {
     private void requireAdmin(CommandSender s) { if (!s.hasPermission("infinitylibrary.admin")) throw new IllegalArgumentException("Missing permission infinitylibrary.admin"); }
     private void require(String[] args, int n, String usage) { if (args.length < n) throw new IllegalArgumentException(usage); }
     private void msg(CommandSender s, String m) { s.sendMessage(ChatColor.translateAlternateColorCodes('&', "&5[InfinityLibrary] &f" + m)); }
-    private void help(CommandSender s) { msg(s, "Commands: /il gui, roomgui, home, wand, connectionwand, variationwand, wandmode, connectionmode, variationmode, pos1, pos2, addconnection, clearconnections, clearvariations, saveroom, applyvariations, savedefault, editroom, deleteroom, listrooms, setrange, genrange, reset, setstart, book, reload"); }
+    private void help(CommandSender s) { msg(s, "Commands: /il gui, roomgui, home, wand, connectionwand, variationwand, wandmode, connectionmode, variationmode, pos1, pos2, addconnection, clearconnections, clearvariations, saveroom, applyvariations, savedefault, editroom, deleteroom, listrooms, setrange, genrange, toggleblocking, setblocker, reset, setstart, book, reload"); }
     @Override public List<String> onTabComplete(CommandSender s, Command c, String a, String[] args) {
-        if (args.length == 1) return List.of("gui","roomgui","stats","home","start","wand","connectionwand","connwand","variationwand","varwand","wandmode","connectionmode","connmode","variationmode","varmode","pos1","pos2","addconnection","clearconnections","clearvariations","saveroom","applyvariations","savedefault","editroom","deleteroom","listrooms","setrange","genrange","reset","setstart","book","reload").stream().filter(x -> x.startsWith(args[0].toLowerCase(Locale.ROOT))).toList();
+        if (args.length == 1) return List.of("gui","roomgui","stats","home","start","wand","connectionwand","connwand","variationwand","varwand","wandmode","connectionmode","connmode","variationmode","varmode","pos1","pos2","addconnection","clearconnections","clearvariations","saveroom","applyvariations","savedefault","editroom","deleteroom","listrooms","setrange","genrange","toggleblocking","setblocker","reset","setstart","book","reload").stream().filter(x -> x.startsWith(args[0].toLowerCase(Locale.ROOT))).toList();
         if (args.length == 2 && args[0].equalsIgnoreCase("wandmode")) return List.of("pos1", "pos2");
         if (args.length == 2 && (args[0].equalsIgnoreCase("connectionmode") || args[0].equalsIgnoreCase("connmode"))) return List.of("conn");
         if (args.length == 2 && args[0].equalsIgnoreCase("book")) return List.of("public", "private", "edit");

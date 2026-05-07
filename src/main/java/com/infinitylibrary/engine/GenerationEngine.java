@@ -100,14 +100,17 @@ public class GenerationEngine {
     }
 
     private void sealConnection(PlacedRoom parent, ConnectionPoint target) {
+        if (!plugin.getConfig().getBoolean("generation.path-blocking.enabled", true)) return;
         World w = ensureWorld();
+        Material blockMaterial = Material.matchMaterial(plugin.getConfig().getString("generation.path-blocking.material", "SMOOTH_STONE"));
+        if (blockMaterial == null) blockMaterial = Material.SMOOTH_STONE;
         Vector3i base = parent.origin().add(target.position());
         Vector3i outward = faceVector(target.direction());
         for (int dy=0;dy<target.height();dy++) for (int dw=-(target.width()/2);dw<=target.width()/2;dw++) {
             int x = base.x() + outward.x(), y = base.y() + dy + outward.y(), z = base.z() + outward.z();
             if (target.direction()==BlockFace.NORTH || target.direction()==BlockFace.SOUTH) x += dw;
             else if (target.direction()==BlockFace.EAST || target.direction()==BlockFace.WEST) z += dw;
-            w.getBlockAt(x,y,z).setType(Material.SMOOTH_STONE, false);
+            w.getBlockAt(x,y,z).setType(blockMaterial, false);
             sealedBlocks.add(new Vector3i(x,y,z));
         }
     }
