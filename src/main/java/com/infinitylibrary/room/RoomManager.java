@@ -50,8 +50,13 @@ public class RoomManager {
     public Collection<Room> allRooms() { return Collections.unmodifiableCollection(rooms.values()); }
     public Optional<Room> get(String id) { return Optional.ofNullable(rooms.get(id)); }
     public void delete(String id) {
-        if (id.startsWith("builtin_")) throw new IllegalArgumentException("Built-in rooms can be edited with /il savedefault, but not deleted.");
         rooms.remove(id);
+        String startId = plugin.getConfig().getString("generation.start-room-id", "builtin_start");
+        if (id.equals(startId)) {
+            String replacement = rooms.keySet().stream().findFirst().orElse("builtin_start");
+            plugin.getConfig().set("generation.start-room-id", replacement);
+            plugin.saveConfig();
+        }
         save();
     }
     public void setPos1(Player p) { setPos1(p, p.getLocation()); }
@@ -59,11 +64,21 @@ public class RoomManager {
     public void setPos1(Player p, Location location) { pos1.put(p.getUniqueId(), Vector3i.from(location)); }
     public void setPos2(Player p, Location location) { pos2.put(p.getUniqueId(), Vector3i.from(location)); }
     public Vector3i relativeToSelection(Player p, Location location) {
-        Vector3i a = pos1.get(p.getUniqueId()), b = pos2.get(p.getUniqueId());
-        if (a == null || b == null) throw new IllegalArgumentException("Set both selection positions before using the connection wand");
-        int minX = Math.min(a.x(), b.x()), minY = Math.min(a.y(), b.y()), minZ = Math.min(a.z(), b.z());
+        SelectionBounds bounds = selectionBounds(p);
+        int minX = bounds.min().x(), minY = bounds.min().y(), minZ = bounds.min().z();
         return new Vector3i(location.getBlockX() - minX, location.getBlockY() - minY, location.getBlockZ() - minZ);
     }
+
+    public SelectionBounds selectionBounds(Player p) {
+        Vector3i a = pos1.get(p.getUniqueId()), b = pos2.get(p.getUniqueId());
+        if (a == null || b == null) throw new IllegalArgumentException("Set both selection positions before using the connection wand");
+        return new SelectionBounds(
+                new Vector3i(Math.min(a.x(), b.x()), Math.min(a.y(), b.y()), Math.min(a.z(), b.z())),
+                new Vector3i(Math.max(a.x(), b.x()), Math.max(a.y(), b.y()), Math.max(a.z(), b.z()))
+        );
+    }
+
+    public record SelectionBounds(Vector3i min, Vector3i max) {}
 
     public Room capture(Player player, String id, RoomType type, List<ConnectionPoint> connections) {
         Vector3i a = pos1.get(player.getUniqueId()), b = pos2.get(player.getUniqueId());
@@ -78,7 +93,7 @@ public class RoomManager {
                 blocks.add(new RoomBlock(new Vector3i(x - minX, y - minY, z - minZ), block.getBlockData().getAsString()));
             }
         }
-        Room room = new Room(id, type, new Vector3i(maxX - minX + 1, maxY - minY + 1, maxZ - minZ + 1), connections, blocks);
+        Room room = new Room(id, type, new Vector3i(maxX - minX + 1, maxY - minY + 1, maxZ - minZ + 1), connections, blocks, plugin.getSelectionManager().stagedVariations(player), 100.0);
         rooms.put(id, room);
         save();
         return room;
@@ -86,8 +101,12 @@ public class RoomManager {
 
     public Optional<RoomSelection> selectCompatible(ConnectionPoint target, boolean preferBook) {
         List<RoomSelection> candidates = new ArrayList<>();
+        String startRoomId = plugin.getConfig().getString("generation.start-room-id", "builtin_start");
         for (Room room : rooms.values()) {
+            if (room.id().equals(startRoomId)) continue;
             if (preferBook && room.type() != RoomType.BOOK) continue;
+            if (Math.random() * 100.0 > room.spawnChance()) continue;
+            if (Math.random() * 100.0 > room.spawnChance()) continue;
             for (ConnectionPoint cp : room.connections()) for (RoomTransform transform : RoomTransform.all()) {
                 ConnectionPoint transformed = cp.transform(transform, room.size());
                 if (target.compatibleWith(transformed)) candidates.add(new RoomSelection(room, cp, transform));
@@ -100,8 +119,11 @@ public class RoomManager {
 
     public List<RoomSelection> compatibleSelections(ConnectionPoint target, boolean preferBook) {
         List<RoomSelection> candidates = new ArrayList<>();
+        String startRoomId = plugin.getConfig().getString("generation.start-room-id", "builtin_start");
         for (Room room : rooms.values()) {
+            if (room.id().equals(startRoomId)) continue;
             if (preferBook && room.type() != RoomType.BOOK) continue;
+            if (Math.random() * 100.0 > room.spawnChance()) continue;
             for (ConnectionPoint cp : room.connections()) for (RoomTransform transform : RoomTransform.all()) {
                 ConnectionPoint transformed = cp.transform(transform, room.size());
                 if (target.compatibleWith(transformed)) candidates.add(new RoomSelection(room, cp, transform));
@@ -113,6 +135,24 @@ public class RoomManager {
     }
 
     public record RoomSelection(Room room, ConnectionPoint localConnection, RoomTransform transform) {}
+
+    public void appendVariations(String roomId, List<VariationArea> additions) {
+        Room existing = rooms.get(roomId);
+        if (existing == null) throw new IllegalArgumentException("Room not found: " + roomId);
+        List<VariationArea> merged = new ArrayList<>(existing.variations());
+        merged.addAll(additions);
+        Room updated = new Room(existing.id(), existing.type(), existing.size(), existing.connections(), existing.blocks(), merged, existing.spawnChance());
+        rooms.put(roomId, updated);
+        save();
+    }
+
+    public void setRoomChance(String roomId, double chance) {
+        Room existing = rooms.get(roomId);
+        if (existing == null) throw new IllegalArgumentException("Room not found: " + roomId);
+        Room updated = new Room(existing.id(), existing.type(), existing.size(), existing.connections(), existing.blocks(), existing.variations(), chance);
+        rooms.put(roomId, updated);
+        save();
+    }
 
     private void addBuiltinRooms() {
         rooms.put("builtin_start", rectangular("builtin_start", RoomType.FILLER, 9, 6, 9,
@@ -144,7 +184,7 @@ public class RoomManager {
         blocks.add(new RoomBlock(new Vector3i(sx/2,1,sz/2), Material.LANTERN.getKey().toString()));
         if (bookshelf) blocks.add(new RoomBlock(new Vector3i(sx/2,1,1), Material.CHISELED_BOOKSHELF.getKey().toString()));
         if (seats) blocks.add(new RoomBlock(new Vector3i(sx/2,1,sz/2), Material.OAK_STAIRS.getKey().toString()));
-        return new Room(id, type, new Vector3i(sx, sy, sz), cps, blocks);
+        return new Room(id, type, new Vector3i(sx, sy, sz), cps, blocks, List.of(), 100.0);
     }
 
     private void removeDoorBlock(List<RoomBlock> blocks, Vector3i doorwayBlock) {
