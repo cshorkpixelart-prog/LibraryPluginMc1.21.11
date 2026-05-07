@@ -96,8 +96,9 @@ public class RoomManager {
 
     public Optional<RoomSelection> selectCompatible(ConnectionPoint target, boolean preferBook) {
         List<RoomSelection> candidates = new ArrayList<>();
+        String startRoomId = plugin.getConfig().getString("generation.start-room-id", "builtin_start");
         for (Room room : rooms.values()) {
-            if (room.id().equals("builtin_start")) continue;
+            if (room.id().equals(startRoomId)) continue;
             if (preferBook && room.type() != RoomType.BOOK) continue;
             for (ConnectionPoint cp : room.connections()) for (RoomTransform transform : RoomTransform.all()) {
                 ConnectionPoint transformed = cp.transform(transform, room.size());
@@ -111,8 +112,9 @@ public class RoomManager {
 
     public List<RoomSelection> compatibleSelections(ConnectionPoint target, boolean preferBook) {
         List<RoomSelection> candidates = new ArrayList<>();
+        String startRoomId = plugin.getConfig().getString("generation.start-room-id", "builtin_start");
         for (Room room : rooms.values()) {
-            if (room.id().equals("builtin_start")) continue;
+            if (room.id().equals(startRoomId)) continue;
             if (preferBook && room.type() != RoomType.BOOK) continue;
             for (ConnectionPoint cp : room.connections()) for (RoomTransform transform : RoomTransform.all()) {
                 ConnectionPoint transformed = cp.transform(transform, room.size());
