@@ -13,6 +13,7 @@ public class GUIListener implements Listener {
     @EventHandler public void onClick(InventoryClickEvent e) {
         String title = e.getView().getTitle();
         if (title.equals(plugin.getGuiManager().statsTitle())) { e.setCancelled(true); return; }
+        if (title.equals(plugin.getGuiManager().roomEditorTitle())) { e.setCancelled(true); return; }
         if (!title.equals(plugin.getGuiManager().lecternTitle())) return;
         e.setCancelled(true);
         if (!(e.getWhoClicked() instanceof Player player)) return;

@@ -29,6 +29,7 @@ public class GenerationEngine {
     private final File file;
     private final List<PlacedRoom> placed = new ArrayList<>();
     private final Queue<Runnable> placementQueue = new ConcurrentLinkedQueue<>();
+    private final Set<Vector3i> sealedBlocks = new HashSet<>();
     private boolean running;
     private int taskId = -1;
 
@@ -107,6 +108,7 @@ public class GenerationEngine {
             if (target.direction()==BlockFace.NORTH || target.direction()==BlockFace.SOUTH) x += dw;
             else if (target.direction()==BlockFace.EAST || target.direction()==BlockFace.WEST) z += dw;
             w.getBlockAt(x,y,z).setType(Material.SMOOTH_STONE, false);
+            sealedBlocks.add(new Vector3i(x,y,z));
         }
     }
 
@@ -114,7 +116,9 @@ public class GenerationEngine {
         World w = ensureWorld();
         synchronized (placed) {
             for (PlacedRoom pr : placed) clearBox(w, pr.origin(), pr.size());
+            for (Vector3i pos : sealedBlocks) w.getBlockAt(pos.x(), pos.y(), pos.z()).setType(Material.AIR, false);
             placed.clear(); placementQueue.clear();
+            sealedBlocks.clear();
             Room start = roomManager.get(plugin.getConfig().getString("generation.start-room-id", "builtin_start")).orElseThrow();
             Vector3i origin = new Vector3i(plugin.getConfig().getInt("start-location.x"), plugin.getConfig().getInt("start-location.y"), plugin.getConfig().getInt("start-location.z"));
             PlacedRoom pr = new PlacedRoom(UUID.randomUUID(), start.id(), origin, start.size());
@@ -187,6 +191,20 @@ public class GenerationEngine {
         for (int x=o.x(); x<o.x()+s.x(); x++) for (int y=o.y(); y<o.y()+s.y(); y++) for (int z=o.z(); z<o.z()+s.z(); z++) w.getBlockAt(x,y,z).setType(Material.AIR, false);
     }
     private Vector3i faceVector(BlockFace f) { return new Vector3i(f.getModX(), f.getModY(), f.getModZ()); }
+
+    public int generateAroundPlayer(Player player, int maxRooms) {
+        int generated = 0;
+        for (int i = 0; i < maxRooms; i++) {
+            int before;
+            synchronized (placed) { before = placed.size(); }
+            tickPlayer(player);
+            int after;
+            synchronized (placed) { after = placed.size(); }
+            if (after <= before) break;
+            generated += (after - before);
+        }
+        return generated;
+    }
 
     public boolean placeRoomImmediately(String roomId) {
         Room room = roomManager.get(roomId).orElse(null);

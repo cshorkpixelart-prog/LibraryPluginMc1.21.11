@@ -20,6 +20,7 @@ public class CommandHandler implements CommandExecutor, TabCompleter {
         try {
             switch (args[0].toLowerCase(Locale.ROOT)) {
                 case "gui", "stats" -> { if (sender instanceof Player p) plugin.getGuiManager().openStats(p); else msg(sender, "Players only."); }
+                case "roomgui" -> player(sender, p -> plugin.getGuiManager().openRoomEditor(p));
                 case "wand" -> adminPlayer(sender, p -> { p.getInventory().addItem(plugin.getSelectionManager().createWand()); msg(p, "Selection wand added. Use /il wandmode pos1 or /il wandmode pos2, then click blocks while holding it."); });
                 case "connectionwand", "connwand" -> adminPlayer(sender, p -> { p.getInventory().addItem(plugin.getSelectionManager().createConnectionWand()); msg(p, "Connection wand added. Click 2 points on one outer room face to auto-detect connection direction and size. Optional: /il connectionmode [prefix]"); });
                 case "variationwand", "varwand" -> adminPlayer(sender, p -> { p.getInventory().addItem(plugin.getSelectionManager().createVariationWand()); msg(p, "Variation wand added. Use /il variationmode <category> <chancePercent> [prefix], then click 2 points."); });
@@ -33,6 +34,9 @@ public class CommandHandler implements CommandExecutor, TabCompleter {
                 case "variationmode", "varmode" -> adminPlayer(sender, p -> setVariationMode(p, args));
                 case "addconnection" -> adminPlayer(sender, p -> addConnection(p, args));
                 case "saveroom", "editroom", "savedefault" -> adminPlayer(sender, p -> saveRoom(p, args));
+                case "applyvariations" -> adminPlayer(sender, p -> applyVariations(p, args));
+                case "setrange" -> adminPlayer(sender, p -> setRange(p, args));
+                case "genrange" -> adminPlayer(sender, p -> generateRange(p));
                 case "deleteroom" -> { requireAdmin(sender); require(args, 2, "/il deleteroom <id>"); plugin.getRoomManager().delete(args[1]); msg(sender, "Room deleted live: " + args[1]); }
                 case "listrooms" -> msg(sender, "Rooms: " + String.join(", ", plugin.getRoomManager().allRooms().stream().map(Room::id).toList()));
                 case "reset" -> { requireAdmin(sender); plugin.getGenerationEngine().resetToStart(); msg(sender, "Infinity Library reset to only the starting room."); }
@@ -76,6 +80,30 @@ public class CommandHandler implements CommandExecutor, TabCompleter {
         msg(p, "Room saved live: " + room.id() + " (" + room.type() + ")." + (generatedNow ? " Spawned instantly into the active library." : " It will be used automatically on future expansions."));
     }
 
+    private void applyVariations(Player p, String[] args) {
+        require(args, 2, "/il applyvariations <roomId>");
+        List<VariationArea> vars = plugin.getSelectionManager().stagedVariations(p);
+        if (vars.isEmpty()) throw new IllegalArgumentException("No staged variations to apply.");
+        plugin.getRoomManager().appendVariations(args[1], vars);
+        plugin.getSelectionManager().clearStagedVariations(p);
+        msg(p, "Applied " + vars.size() + " variation area(s) to room " + args[1] + ".");
+    }
+
+    private void setRange(Player p, String[] args) {
+        require(args, 2, "/il setrange <1-5>");
+        int range = Integer.parseInt(args[1]);
+        if (range < 1 || range > 5) throw new IllegalArgumentException("Range must be between 1 and 5");
+        plugin.getConfig().set("generation.manual-range", range);
+        plugin.saveConfig();
+        msg(p, "Manual generation range set to " + range + " room(s).");
+    }
+
+    private void generateRange(Player p) {
+        int range = plugin.getConfig().getInt("generation.manual-range", 1);
+        int generated = plugin.getGenerationEngine().generateAroundPlayer(p, range);
+        msg(p, "Generated " + generated + " room(s) around your position.");
+    }
+
     private void teleportStart(Player player) {
         World world = plugin.getGenerationEngine().ensureWorld();
         Location loc = new Location(world, plugin.getConfig().getInt("start-location.x") + 0.5, plugin.getConfig().getInt("start-location.y") + 1.0, plugin.getConfig().getInt("start-location.z") + 0.5, (float) plugin.getConfig().getDouble("start-location.yaw"), (float) plugin.getConfig().getDouble("start-location.pitch"));
@@ -98,9 +126,9 @@ public class CommandHandler implements CommandExecutor, TabCompleter {
     private void requireAdmin(CommandSender s) { if (!s.hasPermission("infinitylibrary.admin")) throw new IllegalArgumentException("Missing permission infinitylibrary.admin"); }
     private void require(String[] args, int n, String usage) { if (args.length < n) throw new IllegalArgumentException(usage); }
     private void msg(CommandSender s, String m) { s.sendMessage(ChatColor.translateAlternateColorCodes('&', "&5[InfinityLibrary] &f" + m)); }
-    private void help(CommandSender s) { msg(s, "Commands: /il gui, home, wand, connectionwand, wandmode, connectionmode, pos1, pos2, addconnection, saveroom, savedefault, editroom, deleteroom, listrooms, reset, setstart, book, reload"); }
+    private void help(CommandSender s) { msg(s, "Commands: /il gui, roomgui, home, wand, connectionwand, variationwand, wandmode, connectionmode, variationmode, pos1, pos2, addconnection, clearconnections, clearvariations, saveroom, applyvariations, savedefault, editroom, deleteroom, listrooms, setrange, genrange, reset, setstart, book, reload"); }
     @Override public List<String> onTabComplete(CommandSender s, Command c, String a, String[] args) {
-        if (args.length == 1) return List.of("gui","stats","home","start","wand","connectionwand","connwand","variationwand","varwand","wandmode","connectionmode","connmode","variationmode","varmode","pos1","pos2","addconnection","clearconnections","clearvariations","saveroom","savedefault","editroom","deleteroom","listrooms","reset","setstart","book","reload").stream().filter(x -> x.startsWith(args[0].toLowerCase(Locale.ROOT))).toList();
+        if (args.length == 1) return List.of("gui","roomgui","stats","home","start","wand","connectionwand","connwand","variationwand","varwand","wandmode","connectionmode","connmode","variationmode","varmode","pos1","pos2","addconnection","clearconnections","clearvariations","saveroom","applyvariations","savedefault","editroom","deleteroom","listrooms","setrange","genrange","reset","setstart","book","reload").stream().filter(x -> x.startsWith(args[0].toLowerCase(Locale.ROOT))).toList();
         if (args.length == 2 && args[0].equalsIgnoreCase("wandmode")) return List.of("pos1", "pos2");
         if (args.length == 2 && (args[0].equalsIgnoreCase("connectionmode") || args[0].equalsIgnoreCase("connmode"))) return List.of("conn");
         if (args.length == 2 && args[0].equalsIgnoreCase("book")) return List.of("public", "private", "edit");

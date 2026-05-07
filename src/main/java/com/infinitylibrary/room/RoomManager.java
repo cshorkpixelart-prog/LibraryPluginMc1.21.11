@@ -97,6 +97,7 @@ public class RoomManager {
     public Optional<RoomSelection> selectCompatible(ConnectionPoint target, boolean preferBook) {
         List<RoomSelection> candidates = new ArrayList<>();
         for (Room room : rooms.values()) {
+            if (room.id().equals("builtin_start")) continue;
             if (preferBook && room.type() != RoomType.BOOK) continue;
             for (ConnectionPoint cp : room.connections()) for (RoomTransform transform : RoomTransform.all()) {
                 ConnectionPoint transformed = cp.transform(transform, room.size());
@@ -111,6 +112,7 @@ public class RoomManager {
     public List<RoomSelection> compatibleSelections(ConnectionPoint target, boolean preferBook) {
         List<RoomSelection> candidates = new ArrayList<>();
         for (Room room : rooms.values()) {
+            if (room.id().equals("builtin_start")) continue;
             if (preferBook && room.type() != RoomType.BOOK) continue;
             for (ConnectionPoint cp : room.connections()) for (RoomTransform transform : RoomTransform.all()) {
                 ConnectionPoint transformed = cp.transform(transform, room.size());
@@ -123,6 +125,16 @@ public class RoomManager {
     }
 
     public record RoomSelection(Room room, ConnectionPoint localConnection, RoomTransform transform) {}
+
+    public void appendVariations(String roomId, List<VariationArea> additions) {
+        Room existing = rooms.get(roomId);
+        if (existing == null) throw new IllegalArgumentException("Room not found: " + roomId);
+        List<VariationArea> merged = new ArrayList<>(existing.variations());
+        merged.addAll(additions);
+        Room updated = new Room(existing.id(), existing.type(), existing.size(), existing.connections(), existing.blocks(), merged);
+        rooms.put(roomId, updated);
+        save();
+    }
 
     private void addBuiltinRooms() {
         rooms.put("builtin_start", rectangular("builtin_start", RoomType.FILLER, 9, 6, 9,
