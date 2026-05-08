@@ -146,15 +146,16 @@ public class BookStorageManager {
         if (block.getType() != Material.CHISELED_BOOKSHELF || books.isEmpty()) return;
         Inventory inv = bookshelfInventory(block);
         if (inv == null) return;
-        for (int i = 0; i < Math.min(inv.getSize(), 6); i++) {
-            if (ThreadLocalRandom.current().nextBoolean()) {
-                Optional<ItemStack> book = randomBook();
-                if (book.isPresent()) {
-                    inv.setItem(i, book.get());
-                    markBookLocation(book.get(), block.getLocation());
-                }
-            }
+        String shelfLoc = serializeLocation(block.getLocation());
+        List<StoredBook> unplaced = books.values().stream().filter(b -> b.shelfLocation() == null || b.shelfLocation().isBlank() || b.shelfLocation().equals(shelfLoc)).toList();
+        if (unplaced.isEmpty()) return;
+        int slot = 0;
+        for (StoredBook book : unplaced) {
+            if (slot >= Math.min(inv.getSize(), 6)) break;
+            inv.setItem(slot++, book.toItemStack());
+            books.put(book.id(), book.withLocation(shelfLoc));
         }
+        saveAsync();
     }
 
     public void beginSearchPrompt(Player player) {

@@ -166,11 +166,28 @@ public class GenerationEngine {
     private void updateLibrarySign(Sign sign, Vector3i pos) {
         if (placed.size() < plugin.getConfig().getInt("generation.sign-min-rooms", 6)) return;
         Vector3i start = new Vector3i(plugin.getConfig().getInt("start-location.x"), plugin.getConfig().getInt("start-location.y"), plugin.getConfig().getInt("start-location.z"));
+        String bookDir = nearestRoomDirection(pos, RoomType.BOOK);
+        String readDir = nearestRoomDirection(pos, RoomType.READ);
         sign.setLine(0, "Infinity Library");
         sign.setLine(1, "Start: " + directionToward(pos, start));
-        sign.setLine(2, "Books: explore");
+        sign.setLine(2, "Book:" + (bookDir == null ? "?" : bookDir) + " Read:" + (readDir == null ? "?" : readDir));
         sign.setLine(3, "Rooms: " + placed.size());
         sign.update(true, false);
+    }
+
+    private String nearestRoomDirection(Vector3i from, RoomType type) {
+        double best = Double.MAX_VALUE;
+        Vector3i bestTarget = null;
+        synchronized (placed) {
+            for (PlacedRoom pr : placed) {
+                Room room = roomManager.get(pr.roomId()).orElse(null);
+                if (room == null || room.type() != type) continue;
+                Vector3i target = pr.origin().add(new Vector3i(room.size().x()/2, 1, room.size().z()/2));
+                double dist = Math.pow(target.x()-from.x(),2) + Math.pow(target.y()-from.y(),2) + Math.pow(target.z()-from.z(),2);
+                if (dist < best) { best = dist; bestTarget = target; }
+            }
+        }
+        return bestTarget == null ? null : directionToward(from, bestTarget);
     }
 
     private String directionToward(Vector3i from, Vector3i to) {
