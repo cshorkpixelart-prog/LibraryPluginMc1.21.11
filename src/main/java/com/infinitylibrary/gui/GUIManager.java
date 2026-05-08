@@ -10,9 +10,13 @@ import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
 
 import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class GUIManager {
     private final InfinityLibraryPlugin plugin;
+    private final Map<UUID, String> selectedRoom = new ConcurrentHashMap<>();
     public GUIManager(InfinityLibraryPlugin plugin) { this.plugin = plugin; }
 
     public void openStats(Player player) {
@@ -37,6 +41,29 @@ public class GUIManager {
 
     public String statsTitle() { return color(plugin.getConfig().getString("gui.title", "&5Infinity Library")); }
     public String lecternTitle() { return color(plugin.getConfig().getString("lectern-gui.title", "&5Library Lectern")); }
+    public String roomEditorTitle() { return color("&5Room Editor"); }
+    public void openRoomEditor(Player player) {
+        Inventory inv = Bukkit.createInventory(null, 54, roomEditorTitle());
+        for (int i=0;i<54;i++) inv.setItem(i, item(Material.GRAY_STAINED_GLASS_PANE, " ", List.of()));
+        inv.setItem(10, item(Material.EMERALD_BLOCK, "&aCreate New Room", List.of("&7Use wands, then /il saveroom")));
+        int slot = 19;
+        for (var room : plugin.getRoomManager().allRooms()) {
+            if (slot >= 54) break;
+            inv.setItem(slot++, item(Material.BOOK, "&b" + room.id(), List.of("&7Type: &f" + room.type(), "&7Connections: &f" + room.connections().size(), "&7Variations: &f" + room.variations().size(), "&eUse /il applyvariations " + room.id())));
+        }
+        player.openInventory(inv);
+    }
+    public String roomDetailsTitle() { return color("&5Room Details"); }
+    public void openRoomDetails(Player player, String roomId) {
+        selectedRoom.put(player.getUniqueId(), roomId);
+        Inventory inv = Bukkit.createInventory(null, 27, roomDetailsTitle());
+        for (int i=0;i<27;i++) inv.setItem(i, item(Material.GRAY_STAINED_GLASS_PANE, " ", List.of()));
+        inv.setItem(11, item(Material.WOODEN_AXE, "&eEdit Selected Area", List.of("&7Use /il pos1 and /il pos2", "&7Then resave/edit room.")));
+        inv.setItem(13, item(Material.SLIME_BALL, "&aAdd Variations", List.of("&7Use variation wand then", "&7/il applyvariations " + roomId)));
+        inv.setItem(15, item(Material.BARRIER, "&cDelete Room", List.of("&7Shift+Right click from room list")));
+        player.openInventory(inv);
+    }
+    public String selectedRoomId(Player player) { return selectedRoom.get(player.getUniqueId()); }
     private Material material(String path, Material fallback) { Material m = Material.matchMaterial(plugin.getConfig().getString(path, fallback.name())); return m == null ? fallback : m; }
     private ItemStack item(Material mat, String name, List<String> lore) { ItemStack stack = new ItemStack(mat); ItemMeta meta = stack.getItemMeta(); meta.setDisplayName(color(name)); meta.setLore(lore.stream().map(this::color).toList()); stack.setItemMeta(meta); return stack; }
     private String color(String s) { return ChatColor.translateAlternateColorCodes('&', s == null ? "" : s); }

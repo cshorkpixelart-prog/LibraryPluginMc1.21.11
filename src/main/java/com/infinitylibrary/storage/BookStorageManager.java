@@ -38,8 +38,14 @@ public class BookStorageManager {
     private final NamespacedKey ownerUuidKey;
     private final NamespacedKey ownerNameKey;
     private final NamespacedKey publicKey;
+    private final NamespacedKey categoryKey;
+    private final NamespacedKey tagsKey;
+    private final NamespacedKey ratingKey;
+    private final NamespacedKey commentsKey;
     private final Map<UUID, StoredBook> books = new ConcurrentHashMap<>();
     private final Set<UUID> awaitingSearch = ConcurrentHashMap.newKeySet();
+    private final Map<UUID, PendingBookMetadata> pendingMetadata = new ConcurrentHashMap<>();
+    private final Map<String, String> shelfCategories = new ConcurrentHashMap<>();
     private YamlConfiguration daily;
 
     public BookStorageManager(InfinityLibraryPlugin plugin) {
@@ -49,6 +55,10 @@ public class BookStorageManager {
         this.ownerUuidKey = new NamespacedKey(plugin, "book_owner_uuid");
         this.ownerNameKey = new NamespacedKey(plugin, "book_owner_name");
         this.publicKey = new NamespacedKey(plugin, "book_public");
+        this.categoryKey = new NamespacedKey(plugin, "book_category");
+        this.tagsKey = new NamespacedKey(plugin, "book_tags");
+        this.ratingKey = new NamespacedKey(plugin, "book_rating");
+        this.commentsKey = new NamespacedKey(plugin, "book_comments");
     }
 
     public void load() {
@@ -62,6 +72,8 @@ public class BookStorageManager {
             try { StoredBook b = StoredBook.read(UUID.fromString(key), root.getConfigurationSection(key)); books.put(b.id(), b); }
             catch (Exception ex) { plugin.getLogger().warning("Skipping invalid stored book " + key + ": " + ex.getMessage()); }
         }
+        ConfigurationSection shelves = y.getConfigurationSection("shelf-categories");
+        if (shelves != null) for (String key : shelves.getKeys(false)) shelfCategories.put(key, shelves.getString(key, ""));
     }
 
     public void saveAsync() { Bukkit.getScheduler().runTaskAsynchronously(plugin, this::saveNow); }
@@ -69,6 +81,8 @@ public class BookStorageManager {
         YamlConfiguration y = new YamlConfiguration();
         ConfigurationSection root = y.createSection("books");
         for (StoredBook b : books.values()) b.write(root.createSection(b.id().toString()));
+        ConfigurationSection shelfRoot = y.createSection("shelf-categories");
+        for (var e : shelfCategories.entrySet()) shelfRoot.set(e.getKey(), e.getValue());
         try { y.save(file); if (daily != null) daily.save(dailyFile); } catch (IOException e) { plugin.getLogger().severe("Unable to save book data: " + e.getMessage()); }
     }
 
@@ -91,8 +105,30 @@ public class BookStorageManager {
         if (stack == null || stack.getType() != Material.WRITTEN_BOOK || !(stack.getItemMeta() instanceof BookMeta meta)) return;
         UUID id = UUID.randomUUID();
         BookOwnership ownership = ownership(meta, contributor);
-        books.put(id, new StoredBook(id, contributor.getUniqueId(), contributor.getName(), ownership.ownerUuid(), ownership.ownerName(), ownership.isPublic(), safe(meta.getTitle()), safe(meta.getAuthor()), List.copyOf(meta.getPages()), stack.serialize(), Instant.now().toString(), serializeLocation(shelfLocation)));
+        PersistentDataContainer pdc = meta.getPersistentDataContainer();
+        String fp = fingerprint(meta);
+        Optional<StoredBook> existing = books.values().stream().filter(b -> fp.equals(fingerprint((BookMeta) Objects.requireNonNull(b.toItemStack().getItemMeta())))).findFirst();
+        if (existing.isPresent()) { books.put(existing.get().id(), existing.get().withLocation(serializeLocation(shelfLocation))); saveAsync(); return; }
+        books.put(id, new StoredBook(id, contributor.getUniqueId(), contributor.getName(), ownership.ownerUuid(), ownership.ownerName(), ownership.isPublic(), safe(meta.getTitle()), safe(meta.getAuthor()), List.copyOf(meta.getPages()), stack.serialize(), Instant.now().toString(), serializeLocation(shelfLocation), safe(pdc.get(categoryKey, PersistentDataType.STRING)), safe(pdc.get(tagsKey, PersistentDataType.STRING)), safe(pdc.get(ratingKey, PersistentDataType.STRING)), safe(pdc.get(commentsKey, PersistentDataType.STRING))));
         saveAsync();
+    }
+
+    public void beginMetadataPrompt(Player player, ItemStack stack, Location shelfLocation) {
+        pendingMetadata.put(player.getUniqueId(), new PendingBookMetadata(stack.clone(), shelfLocation));
+        player.sendMessage(ChatColor.LIGHT_PURPLE + "Enter book metadata as: <category>|<rating>|<comments> (or cancel)");
+    }
+
+    public void setHeldBookMetadata(Player player, String category, String tags, String rating, String comments) {
+        ItemStack item = player.getInventory().getItemInMainHand();
+        if (item == null || (item.getType() != Material.WRITTEN_BOOK && item.getType() != Material.WRITABLE_BOOK) || !item.hasItemMeta()) throw new IllegalArgumentException("Hold a library book first.");
+        ItemMeta meta = item.getItemMeta();
+        ensureOwner(meta, player);
+        PersistentDataContainer pdc = meta.getPersistentDataContainer();
+        if (category != null) pdc.set(categoryKey, PersistentDataType.STRING, category);
+        if (tags != null) pdc.set(tagsKey, PersistentDataType.STRING, tags);
+        if (rating != null) pdc.set(ratingKey, PersistentDataType.STRING, rating);
+        if (comments != null) pdc.set(commentsKey, PersistentDataType.STRING, comments);
+        item.setItemMeta(meta);
     }
 
     public int totalBooks() { return books.size(); }
@@ -110,15 +146,16 @@ public class BookStorageManager {
         if (block.getType() != Material.CHISELED_BOOKSHELF || books.isEmpty()) return;
         Inventory inv = bookshelfInventory(block);
         if (inv == null) return;
-        for (int i = 0; i < Math.min(inv.getSize(), 6); i++) {
-            if (ThreadLocalRandom.current().nextBoolean()) {
-                Optional<ItemStack> book = randomBook();
-                if (book.isPresent()) {
-                    inv.setItem(i, book.get());
-                    markBookLocation(book.get(), block.getLocation());
-                }
-            }
+        String shelfLoc = serializeLocation(block.getLocation());
+        List<StoredBook> unplaced = books.values().stream().filter(b -> b.shelfLocation() == null || b.shelfLocation().isBlank() || b.shelfLocation().equals(shelfLoc)).toList();
+        if (unplaced.isEmpty()) return;
+        int slot = 0;
+        for (StoredBook book : unplaced) {
+            if (slot >= Math.min(inv.getSize(), 6)) break;
+            inv.setItem(slot++, book.toItemStack());
+            books.put(book.id(), book.withLocation(shelfLoc));
         }
+        saveAsync();
     }
 
     public void beginSearchPrompt(Player player) {
@@ -142,6 +179,30 @@ public class BookStorageManager {
         });
         return true;
     }
+
+    public boolean handleMetadataChat(Player player, String input) {
+        PendingBookMetadata pending = pendingMetadata.remove(player.getUniqueId());
+        if (pending == null) return false;
+        if (input.equalsIgnoreCase("cancel")) { player.sendMessage(ChatColor.GRAY + "Book metadata input cancelled."); return true; }
+        String[] parts = input.split("\\|", 3);
+        String category = parts.length > 0 ? parts[0] : "general";
+        String rating = parts.length > 1 ? parts[1] : "unrated";
+        String comments = parts.length > 2 ? parts[2] : "";
+        if (pending.stack().getItemMeta() instanceof BookMeta meta) {
+            meta.getPersistentDataContainer().set(categoryKey, PersistentDataType.STRING, category);
+            meta.getPersistentDataContainer().set(ratingKey, PersistentDataType.STRING, rating);
+            meta.getPersistentDataContainer().set(commentsKey, PersistentDataType.STRING, comments);
+            pending.stack().setItemMeta(meta);
+        }
+        recordBook(player, pending.stack(), pending.shelfLocation());
+        player.sendMessage(ChatColor.GREEN + "Book saved with metadata.");
+        return true;
+    }
+
+    public void setShelfCategory(Location shelf, String category) { shelfCategories.put(serializeLocation(shelf), category); saveAsync(); }
+    public String shelfCategory(Location shelf) { return shelfCategories.getOrDefault(serializeLocation(shelf), ""); }
+    private String fingerprint(BookMeta meta) { return safe(meta.getTitle()) + "|" + safe(meta.getAuthor()) + "|" + String.join("\n", meta.getPages()); }
+    private record PendingBookMetadata(ItemStack stack, Location shelfLocation) {}
 
     public boolean canRead(Player player, ItemStack item) {
         if (item == null || item.getType() != Material.WRITTEN_BOOK || !item.hasItemMeta()) return true;
@@ -239,19 +300,19 @@ public class BookStorageManager {
     private String safe(String value) { return value == null ? "" : value; }
     private record BookOwnership(String ownerUuid, String ownerName, boolean isPublic) {}
 
-    public record StoredBook(UUID id, UUID contributor, String contributorName, String ownerUuid, String ownerName, boolean isPublic, String title, String author, List<String> pages, Map<String, Object> item, String insertedAt, String shelfLocation) {
+    public record StoredBook(UUID id, UUID contributor, String contributorName, String ownerUuid, String ownerName, boolean isPublic, String title, String author, List<String> pages, Map<String, Object> item, String insertedAt, String shelfLocation, String category, String tags, String rating, String comments) {
         @SuppressWarnings("unchecked") public ItemStack toItemStack() { return ItemStack.deserialize(item); }
-        public StoredBook withLocation(String location) { return new StoredBook(id, contributor, contributorName, ownerUuid, ownerName, isPublic, title, author, pages, item, insertedAt, location); }
+        public StoredBook withLocation(String location) { return new StoredBook(id, contributor, contributorName, ownerUuid, ownerName, isPublic, title, author, pages, item, insertedAt, location, category, tags, rating, comments); }
         public String displayContributor() {
             OfflinePlayer p = Bukkit.getOfflinePlayer(contributor);
             return p.getName() != null ? p.getName() : contributorName;
         }
         public void write(ConfigurationSection s) {
-            s.set("contributor", contributor.toString()); s.set("contributor-name", contributorName); s.set("owner-uuid", ownerUuid); s.set("owner-name", ownerName); s.set("public", isPublic); s.set("title", title); s.set("author", author); s.set("pages", pages); s.set("item", item); s.set("inserted-at", insertedAt); s.set("shelf-location", shelfLocation);
+            s.set("contributor", contributor.toString()); s.set("contributor-name", contributorName); s.set("owner-uuid", ownerUuid); s.set("owner-name", ownerName); s.set("public", isPublic); s.set("title", title); s.set("author", author); s.set("pages", pages); s.set("item", item); s.set("inserted-at", insertedAt); s.set("shelf-location", shelfLocation); s.set("category", category); s.set("tags", tags); s.set("rating", rating); s.set("comments", comments);
         }
         public static StoredBook read(UUID id, ConfigurationSection s) {
             String contributor = s.getString("contributor");
-            return new StoredBook(id, UUID.fromString(contributor), s.getString("contributor-name", "Unknown"), s.getString("owner-uuid", contributor), s.getString("owner-name", s.getString("contributor-name", "Unknown")), s.getBoolean("public", false), s.getString("title", ""), s.getString("author", ""), s.getStringList("pages"), s.getConfigurationSection("item").getValues(false), s.getString("inserted-at", ""), s.getString("shelf-location", ""));
+            return new StoredBook(id, UUID.fromString(contributor), s.getString("contributor-name", "Unknown"), s.getString("owner-uuid", contributor), s.getString("owner-name", s.getString("contributor-name", "Unknown")), s.getBoolean("public", false), s.getString("title", ""), s.getString("author", ""), s.getStringList("pages"), s.getConfigurationSection("item").getValues(false), s.getString("inserted-at", ""), s.getString("shelf-location", ""), s.getString("category", ""), s.getString("tags", ""), s.getString("rating", ""), s.getString("comments", ""));
         }
     }
 }

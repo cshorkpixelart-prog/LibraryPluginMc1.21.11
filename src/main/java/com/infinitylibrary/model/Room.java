@@ -12,13 +12,17 @@ public class Room {
     private final Vector3i size;
     private final List<ConnectionPoint> connections;
     private final List<RoomBlock> blocks;
+    private final List<VariationArea> variations;
+    private final double spawnChance;
 
-    public Room(String id, RoomType type, Vector3i size, List<ConnectionPoint> connections, List<RoomBlock> blocks) {
+    public Room(String id, RoomType type, Vector3i size, List<ConnectionPoint> connections, List<RoomBlock> blocks, List<VariationArea> variations, double spawnChance) {
         this.id = Objects.requireNonNull(id);
         this.type = Objects.requireNonNull(type);
         this.size = Objects.requireNonNull(size);
         this.connections = List.copyOf(connections);
         this.blocks = List.copyOf(blocks);
+        this.variations = List.copyOf(variations);
+        this.spawnChance = Math.max(0.0, Math.min(100.0, spawnChance));
         validate();
     }
     public String id() { return id; }
@@ -26,6 +30,8 @@ public class Room {
     public Vector3i size() { return size; }
     public List<ConnectionPoint> connections() { return connections; }
     public List<RoomBlock> blocks() { return blocks; }
+    public List<VariationArea> variations() { return variations; }
+    public double spawnChance() { return spawnChance; }
 
     public void validate() {
         if (connections.isEmpty()) throw new IllegalArgumentException("Room " + id + " must contain at least one connection point");
@@ -66,6 +72,9 @@ public class Room {
         List<String> serialized = new ArrayList<>();
         for (RoomBlock b : blocks) serialized.add(b.position() + "|" + b.blockData());
         s.set("blocks", serialized);
+        s.set("spawn-chance", spawnChance);
+        ConfigurationSection vSec = s.createSection("variations");
+        for (VariationArea variation : variations) variation.write(vSec.createSection(variation.id()));
     }
 
     public static Room read(String id, ConfigurationSection s) {
@@ -79,6 +88,9 @@ public class Room {
             String[] p = line.split("\\|", 2);
             if (p.length == 2) blocks.add(new RoomBlock(Vector3i.parse(p[0]), p[1]));
         }
-        return new Room(id, type, size, cps, blocks);
+        List<VariationArea> variations = new ArrayList<>();
+        ConfigurationSection vSec = s.getConfigurationSection("variations");
+        if (vSec != null) for (String key : vSec.getKeys(false)) variations.add(VariationArea.read(key, vSec.getConfigurationSection(key)));
+        return new Room(id, type, size, cps, blocks, variations, s.getDouble("spawn-chance", 100.0));
     }
 }
